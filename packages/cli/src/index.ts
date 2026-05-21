@@ -10,12 +10,14 @@ import { updateCommand } from "./commands/update";
 import { dashboardCommand } from "./commands/dashboard";
 import { doctorCommand } from "./commands/doctor";
 import { reviewersCommand } from "./commands/reviewers";
+import { graphCommand } from "./commands/graph";
+import { usageCommand } from "./commands/usage";
 import { checkForUpdate, printUpdateNotification } from "./lib/update-check.js";
 import { checkLocalArtifactVersion, printLocalVersionHint } from "./lib/cli-config.js";
 import { CLI_VERSION } from "./lib/version.js";
 
 // Only check for updates on human-facing commands (not AI-invoked ones like `state`)
-const HUMAN_COMMANDS = new Set(["init", "update", "doctor", "dashboard", "progress"]);
+const HUMAN_COMMANDS = new Set(["init", "update", "doctor", "dashboard", "progress", "graph", "usage"]);
 const subcommand = process.argv[2];
 const updateCheck = subcommand && HUMAN_COMMANDS.has(subcommand)
   ? checkForUpdate(CLI_VERSION)
@@ -39,6 +41,8 @@ program.addCommand(updateCommand);
 program.addCommand(dashboardCommand);
 program.addCommand(doctorCommand);
 program.addCommand(reviewersCommand);
+program.addCommand(graphCommand);
+program.addCommand(usageCommand);
 
 await program.parseAsync();
 

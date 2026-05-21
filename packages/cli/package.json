@@ -68,6 +68,8 @@
   "dependencies": {
     "@inquirer/prompts": "^7.2.0",
     "@open-code-review/agents": "workspace:*",
+    "@vscode/tree-sitter-wasm": "^0.3.1",
+    "better-sqlite3": "12.10.0",
     "chalk": "^5.4.1",
     "chokidar": "^4.0.3",
     "commander": "^13.0.0",
@@ -81,6 +83,7 @@
     "access": "public"
   },
   "devDependencies": {
+    "@open-code-review/graph": "workspace:*",
     "@open-code-review/platform": "workspace:*",
     "@types/sql.js": "^1.4.9"
   }

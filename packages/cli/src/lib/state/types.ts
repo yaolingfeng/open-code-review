@@ -30,6 +30,8 @@ export type InitParams = {
   workflowType: WorkflowType;
   sessionDir: string;
   ocrDir: string;
+  fresh?: boolean;
+  preserveCommandUid?: string;
 };
 
 export type TransitionParams = {

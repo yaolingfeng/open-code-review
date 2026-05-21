@@ -153,6 +153,9 @@ export function useClearMapProgress(sessionId: string, runNumber: number) {
       queryClient.invalidateQueries({
         queryKey: ['sessions', sessionId, 'runs', runNumber],
       })
+      queryClient.invalidateQueries({
+        queryKey: ['sessions', sessionId, 'runs', runNumber, 'sections'],
+      })
     },
   })
 }

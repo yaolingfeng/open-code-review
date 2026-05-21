@@ -11,6 +11,11 @@ Every OCR session creates files in `.ocr/sessions/{session-id}/`:
 ├── discovered-standards.md # Merged project context (shared across rounds)
 ├── requirements.md         # User-provided requirements (if any, shared)
 ├── context.md              # Phase 2+3: Change summary + Tech Lead guidance (shared)
+├── graph-context.md        # Optional graph context summary for review/map
+├── graph-context.json      # Optional structured graph context for tooling
+├── graph-review-analysis.json # Optional summary-first graph review analysis for review tooling
+├── usage.md                # Optional token usage summary for the workflow
+├── usage.json              # Optional structured token usage summary and rows
 ├── map/                    # Code Review Map artifacts (optional)
 │   └── runs/
 │       ├── run-1/          # First map generation
@@ -60,7 +65,9 @@ OCR uses a **round-first architecture** where all round-specific artifacts live 
 | `discovered-standards.md` | `reviews/*.md` | `topology.md` |
 | `requirements.md` | `discourse.md` | `flow-analysis.md` |
 | `context.md` | `final.md` | `requirements-mapping.md` |
-| | | `map.md` |
+| `graph-context.md/json` | | `map.md` |
+| `graph-review-analysis.json` | | |
+| `usage.md/json` | | |
 
 **When to use multiple rounds**:
 - Author addresses feedback and requests re-review
@@ -110,6 +117,11 @@ OCR uses a **run-based architecture** for maps, parallel to review rounds.
 | File | When Created | Description |
 |------|--------------|-------------|
 | `requirements.md` | Phase 1 | User-provided requirements, specs, or acceptance criteria |
+| `graph-context.md` | Phase 2 (review/map, when graph is available) | Human-readable graph impact, test-gap, and unsupported-file context |
+| `graph-context.json` | Phase 2 (review/map, when graph is available) | Structured graph context for dashboard and downstream tooling |
+| `graph-review-analysis.json` | Phase 2 (review, best-effort) | Summary-first graph review analysis for reviewer prioritization, hints, and module summaries |
+| `usage.md` | Phase 8 (review/map, best-effort) | Human-readable token usage summary |
+| `usage.json` | Phase 8 (review/map, best-effort) | Structured token usage summary and rows |
 
 ## Reviewer File Naming
 
@@ -144,13 +156,13 @@ rounds/round-1/reviews/ephemeral-2.md     # Ephemeral reviewer (from --reviewer)
 | Phase | Phase Name | Files to Create/Update |
 |-------|------------|------------------------|
 | 1 | Context Discovery | `discovered-standards.md`, `requirements.md` (if provided) |
-| 2 | Change Analysis | `context.md`, call `ocr state transition` |
+| 2 | Change Analysis | `context.md`, `graph-context.md/json`, `graph-review-analysis.json` for review sessions when graph commands run, call `ocr state transition` |
 | 3 | Tech Lead Analysis | Update `context.md` with guidance, call `ocr state transition` |
 | 4 | Parallel Reviews | `rounds/round-{n}/reviews/{type}-{n}.md` for each reviewer, call `ocr state transition` |
 | 5 | Aggregation | (Inline analysis), call `ocr state transition` |
 | 6 | Discourse | `rounds/round-{n}/discourse.md`, call `ocr state transition` |
 | 7 | Synthesis | Pipe data to `ocr state round-complete --stdin` (writes `round-meta.json`), write `final.md` |
-| 8 | Presentation | Call `ocr state close` |
+| 8 | Presentation | Export `usage.md/json`, call `ocr state close` |
 
 ## State Transitions and File Validation
 

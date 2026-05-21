@@ -11,6 +11,10 @@ import { LivenessHeader } from './components/liveness-header'
 import { ResumeCard } from './components/resume-card'
 import { fetchApi, parseUtcDate } from '../../lib/utils'
 import { formatDate } from '../../lib/date-utils'
+import { GraphStatusBadge } from '../graph/graph-status-badge'
+import { GraphExplorationPanel } from '../graph/graph-exploration-panel'
+import { TokenUsageCard } from '../usage/token-usage-card'
+import { useTokenUsage } from '../usage/use-token-usage'
 import type { OrchestrationEvent } from '../../lib/api-types'
 
 // Phase names must match the CLI's `ocr state transition --phase` values exactly.
@@ -89,6 +93,7 @@ export function SessionDetailPage() {
   })
 
   const agentSessionsQuery = useAgentSessions(id ?? undefined)
+  const tokenUsageQuery = useTokenUsage(id ?? '')
   const liveness = agentSessionsQuery.data
     ? classifyLiveness(agentSessionsQuery.data.agent_sessions)
     : null
@@ -109,6 +114,11 @@ export function SessionDetailPage() {
   // Refresh events when the DB sync watcher detects new orchestration_events
   useSocketEvent('session:events', () => {
     queryClient.invalidateQueries({ queryKey: ['sessions', id, 'events'] })
+  })
+
+  useSocketEvent<{ workflow_id?: string }>('token_usage:updated', (payload) => {
+    if (payload.workflow_id !== id) return
+    queryClient.invalidateQueries({ queryKey: ['sessions', id, 'usage'] })
   })
 
   if (isLoading) {
@@ -180,7 +190,10 @@ export function SessionDetailPage() {
               </span>
             </div>
           </div>
-          <StatusBadge variant={session.status} />
+          <div className="flex items-center gap-2">
+            <GraphStatusBadge />
+            <StatusBadge variant={session.status} />
+          </div>
         </div>
 
         <div className="mt-6">
@@ -214,6 +227,14 @@ export function SessionDetailPage() {
           )}
         </div>
       </div>
+
+      <TokenUsageCard
+        summary={tokenUsageQuery.data?.summary}
+        isLoading={tokenUsageQuery.isLoading}
+        error={tokenUsageQuery.error}
+      />
+
+      <GraphExplorationPanel session={session} />
 
       {/* Workflow Tabs */}
       <div className="rounded-lg border border-zinc-200 bg-white p-6 dark:border-zinc-800 dark:bg-zinc-900">

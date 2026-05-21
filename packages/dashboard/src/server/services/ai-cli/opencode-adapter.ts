@@ -25,6 +25,7 @@ import type {
   SpawnOptions,
   SpawnResult,
 } from './types.js'
+import { extractUsageEvent } from './helpers.js'
 import { cleanEnv } from '../../socket/env.js'
 import {
   buildResumeArgs as buildResumeArgsShared,
@@ -140,6 +141,10 @@ export class OpenCodeAdapter implements AiCliAdapter {
       stdio: ['ignore', 'pipe', 'pipe'],
     })
 
+    // Detached child processes keep the parent's event loop alive,
+    // preventing process.exit() from firing after httpServer.close().
+    if (isWorkflow) proc.unref()
+
     return { process: proc, detached: isWorkflow }
   }
 
@@ -209,6 +214,7 @@ export class OpenCodeAdapter implements AiCliAdapter {
 
     const events: NormalizedEvent[] = []
     const type = parsed['type'] as string | undefined
+    const usage = extractUsageEvent(parsed)
 
     // Every NDJSON event carries sessionID at the top level
     if (parsed['sessionID']) {
@@ -289,6 +295,10 @@ export class OpenCodeAdapter implements AiCliAdapter {
     // step_start / step_finish are intra-process phase markers — they're
     // not sub-agent boundaries (OCR sub-agents come from `ocr session`
     // calls, journaled separately). Intentionally ignored.
+
+    if (usage) {
+      events.push(usage)
+    }
 
     return events
   }

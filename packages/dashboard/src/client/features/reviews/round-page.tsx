@@ -15,6 +15,8 @@ import { ChatPanel } from '../chat/components/chat-panel'
 import { PostReviewDialog } from './components/post-review-dialog'
 import { AddressFeedbackPopover } from './components/address-feedback-popover'
 import { TerminalHandoffPanel } from '../sessions/components/terminal-handoff-panel'
+import { GraphContextCard } from '../graph/graph-context-card'
+import { useGraphContextArtifact } from '../graph/use-graph'
 
 const ROUND_STATUS_OPTIONS: { value: RoundTriage; label: string }[] = [
   { value: 'needs_review', label: 'Needs Review' },
@@ -37,6 +39,7 @@ export function RoundPage() {
   const { data: finalArtifact } = useArtifact(sessionId ?? '', 'final')
   const { data: finalHumanArtifact } = useArtifact(sessionId ?? '', 'final-human')
   const { data: discourseArtifact } = useArtifact(sessionId ?? '', 'discourse')
+  const { data: graphContextArtifact } = useGraphContextArtifact(sessionId ?? '')
 
   const updateStatus = useUpdateRoundStatus()
 
@@ -153,6 +156,10 @@ export function RoundPage() {
           suggestionCount={round.suggestion_count}
           shouldFixCount={round.should_fix_count}
         />
+      )}
+
+      {graphContextArtifact?.content && (
+        <GraphContextCard content={graphContextArtifact.content} />
       )}
 
       {/* Reviewer Cards */}

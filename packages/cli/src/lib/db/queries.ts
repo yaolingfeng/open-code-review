@@ -9,6 +9,7 @@ import type {
   InsertSessionParams,
   SessionRow,
   UpdateSessionParams,
+  WorkflowType,
 } from "./types.js";
 import { resultToRows, resultToRow } from "./result-mapper.js";
 
@@ -94,6 +95,141 @@ export function getAllSessions(db: Database): SessionRow[] {
   return resultToRows<SessionRow>(
     db.exec("SELECT * FROM sessions ORDER BY started_at DESC"),
   );
+}
+
+/**
+ * Reset all derived state for a workflow id while preserving the session row.
+ *
+ * `--fresh` review/map runs intentionally reuse the deterministic session id
+ * (`YYYY-MM-DD-branch`). Without this reset, old rounds, findings, command
+ * executions, and orchestration events can bleed into the new run and make the
+ * dashboard appear stuck on stale phases.
+ */
+export function resetSessionForFreshStart(
+  db: Database,
+  id: string,
+  params: {
+    branch: string;
+    workflow_type: WorkflowType;
+    session_dir: string;
+    preserve_command_uid?: string;
+  },
+): void {
+  const preserveUid = params.preserve_command_uid ?? null;
+
+  // Break self-references first so command rows for the workflow can be removed
+  // regardless of parent/child insertion order.
+  if (preserveUid) {
+    db.run(
+      `UPDATE command_executions
+         SET parent_id = NULL
+       WHERE (workflow_id = ?
+          OR parent_id IN (SELECT id FROM command_executions WHERE workflow_id = ?))
+         AND COALESCE(uid, '') <> ?`,
+      [id, id, preserveUid],
+    );
+  } else {
+    db.run(
+      `UPDATE command_executions
+         SET parent_id = NULL
+       WHERE workflow_id = ?
+          OR parent_id IN (SELECT id FROM command_executions WHERE workflow_id = ?)`,
+      [id, id],
+    );
+  }
+
+  if (preserveUid) {
+    db.run(
+      "DELETE FROM command_executions WHERE workflow_id = ? AND COALESCE(uid, '') <> ?",
+      [id, preserveUid],
+    );
+  } else {
+    db.run("DELETE FROM command_executions WHERE workflow_id = ?", [id]);
+  }
+  db.run("DELETE FROM agent_token_usage WHERE workflow_id = ?", [id]);
+  db.run("DELETE FROM orchestration_events WHERE session_id = ?", [id]);
+  db.run("DELETE FROM markdown_artifacts WHERE session_id = ?", [id]);
+  db.run("DELETE FROM chat_conversations WHERE session_id = ?", [id]);
+  db.run(
+    `DELETE FROM user_notes
+      WHERE target_type = 'finding'
+        AND target_id IN (
+          SELECT CAST(f.id AS TEXT)
+            FROM review_findings f
+            JOIN reviewer_outputs o ON o.id = f.reviewer_output_id
+            JOIN review_rounds r ON r.id = o.round_id
+           WHERE r.session_id = ?
+        )`,
+    [id],
+  );
+  db.run(
+    `DELETE FROM user_notes
+      WHERE target_type = 'round'
+        AND target_id IN (
+          SELECT CAST(id AS TEXT) FROM review_rounds WHERE session_id = ?
+        )`,
+    [id],
+  );
+  db.run(
+    `DELETE FROM user_notes
+      WHERE target_type = 'file'
+        AND target_id IN (
+          SELECT CAST(f.id AS TEXT)
+            FROM map_files f
+            JOIN map_sections s ON s.id = f.section_id
+            JOIN map_runs r ON r.id = s.map_run_id
+           WHERE r.session_id = ?
+        )`,
+    [id],
+  );
+  db.run(
+    `DELETE FROM user_notes
+      WHERE target_type = 'section'
+        AND target_id IN (
+          SELECT CAST(s.id AS TEXT)
+            FROM map_sections s
+            JOIN map_runs r ON r.id = s.map_run_id
+           WHERE r.session_id = ?
+        )`,
+    [id],
+  );
+  db.run(
+    `DELETE FROM user_notes
+      WHERE target_type = 'run'
+        AND target_id IN (
+          SELECT CAST(id AS TEXT) FROM map_runs WHERE session_id = ?
+        )`,
+    [id],
+  );
+  db.run("DELETE FROM review_rounds WHERE session_id = ?", [id]);
+  db.run("DELETE FROM map_runs WHERE session_id = ?", [id]);
+  db.run("DELETE FROM user_notes WHERE target_type = 'session' AND target_id = ?", [id]);
+
+  db.run(
+    `UPDATE sessions
+        SET branch = ?,
+            workflow_type = ?,
+            status = 'active',
+            current_phase = 'context',
+            phase_number = 1,
+            current_round = 1,
+            current_map_run = 1,
+            session_dir = ?,
+            started_at = datetime('now'),
+            updated_at = datetime('now')
+      WHERE id = ?`,
+    [params.branch, params.workflow_type, params.session_dir, id],
+  );
+
+  if (preserveUid) {
+    db.run(
+      `UPDATE command_executions
+          SET workflow_id = ?,
+              last_heartbeat_at = datetime('now')
+        WHERE uid = ?`,
+      [id, preserveUid],
+    );
+  }
 }
 
 // ── Events ──

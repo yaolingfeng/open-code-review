@@ -29,7 +29,9 @@ import { cleanEnv } from './env.js'
 import {
   generateCommandUid,
   appendCommandLog,
+  recordTokenUsage,
   type CommandLogEntry,
+  bumpAgentSessionHeartbeat,
 } from '@open-code-review/cli/db'
 
 /** Split a command string into tokens, respecting single and double quotes. */
@@ -82,6 +84,7 @@ type CommandStartedEvent = {
 const ALLOWED_COMMANDS = new Set([
   'progress',
   'state',
+  'usage',
 ])
 
 /** AI workflow commands — spawned via the AI CLI adapter strategy. */
@@ -351,6 +354,8 @@ function extractPerInstanceModels(subArgs: string[]): string[] {
 // ── State ──
 
 const MAX_CONCURRENT = 3
+const STREAM_HEARTBEAT_INTERVAL_MS = 15_000
+const ORPHAN_EXIT_CODE = -3
 
 type ProcessEntry = {
   process: ChildProcess | null
@@ -364,8 +369,16 @@ type ProcessEntry = {
   detached: boolean
   /** Set to true by the cancel handler so the close handler can use exit code -2. */
   cancelled: boolean
+  /** User requested cancellation before/while a child process is available. */
+  cancelRequested: boolean
+  /** SIGTERM has been sent for this cancellation request. */
+  cancelSignalSent: boolean
+  /** Escalation timer used to SIGKILL a process that ignores SIGTERM. */
+  cancelKillTimer?: ReturnType<typeof setTimeout>
   /** Workflow-id auto-link polling timer; cleared on process close. */
   linkPoll?: ReturnType<typeof setInterval>
+  /** Last time a streaming vendor event refreshed this command's DB heartbeat. */
+  lastStreamHeartbeatAt?: number
 }
 
 /** Active commands keyed by execution_id */
@@ -447,6 +460,165 @@ export function getActiveCommands(): ActiveCommandInfo[] {
     started_at: entry.startedAt,
     output: entry.outputBuffer,
   }))
+}
+
+/**
+ * Reconciles a command that was completed by an external CLI DB write (for
+ * example `ocr state close` inside the AI workflow). The child process may
+ * still be alive, so we remove dashboard running state, notify clients, and
+ * then ask the process group to exit without rewriting the already-complete DB
+ * row when its eventual close event fires.
+ */
+export function completeActiveCommandFromDisk(
+  io: SocketIOServer,
+  db: Database,
+  ocrDir: string,
+  executionId: number,
+  exitCode: number | null,
+  finishedAt: string,
+): void {
+  const entry = activeCommands.get(executionId)
+  if (!entry) return
+
+  if (exitCode === ORPHAN_EXIT_CODE) {
+    // A stale-heartbeat sweep can race with a still-streaming AI process:
+    // the disk row is marked orphaned, DbSyncWatcher mirrors it, and this
+    // hook fires while the process is still present in activeCommands. In
+    // that case the database sentinel is stale, not authoritative; revive
+    // the row and keep the process alive.
+    reviveActiveOrphan(io, db, executionId)
+    return
+  }
+
+  if (entry.linkPoll) {
+    clearInterval(entry.linkPoll)
+    entry.linkPoll = undefined
+  }
+  if (entry.cancelKillTimer) {
+    clearTimeout(entry.cancelKillTimer)
+    entry.cancelKillTimer = undefined
+  }
+
+  clearSpawnMarker(ocrDir)
+  activeCommands.delete(executionId)
+
+  io.emit('command:finished', {
+    execution_id: executionId,
+    exitCode: exitCode ?? 0,
+    finished_at: finishedAt,
+  })
+
+  signalProcess(entry, 'SIGTERM')
+}
+
+function reviveActiveOrphan(
+  io: SocketIOServer,
+  db: Database,
+  executionId: number,
+): void {
+  const workflowId = db.exec(
+    'SELECT workflow_id FROM command_executions WHERE id = ?',
+    [executionId],
+  )[0]?.values[0]?.[0]
+  db.run(
+    `UPDATE command_executions
+       SET exit_code = NULL,
+           finished_at = NULL,
+           last_heartbeat_at = datetime('now'),
+           notes = COALESCE(notes || char(10), '') || ?
+    WHERE id = ?`,
+    ['revived active process after stale orphan sweep', executionId],
+  )
+  if (typeof workflowId === 'string' && workflowId.length > 0) {
+    io.emit('agent_session:updated', { workflow_ids: [workflowId] })
+  }
+}
+
+type CancelErrorCode = 'invalid_request' | 'not_active' | 'internal_error'
+
+function emitCancelError(
+  socket: Socket,
+  executionId: number | undefined,
+  code: CancelErrorCode,
+  error: string,
+): void {
+  socket.emit('command:cancel:error', { execution_id: executionId, code, error })
+}
+
+function signalProcess(entry: ProcessEntry, signal: NodeJS.Signals): void {
+  const proc = entry.process
+  if (!proc) return
+  const pid = proc.pid
+
+  // Detached AI workflows run in their own process group; kill the group so
+  // adapter shells and child tools don't survive after the parent exits.
+  if (entry.detached && pid) {
+    try {
+      process.kill(-pid, signal)
+      return
+    } catch {
+      // Fall through to killing the direct child; it may already be gone or
+      // the host may not support negative PIDs.
+    }
+  }
+
+  try {
+    proc.kill(signal)
+  } catch {
+    /* already exited */
+  }
+}
+
+function requestCancel(
+  io: SocketIOServer,
+  executionId: number,
+  entry: ProcessEntry,
+  socket?: Socket,
+): void {
+  entry.cancelled = true
+  entry.cancelRequested = true
+
+  const proc = entry.process
+  if (!proc) {
+    io.emit('command:cancelling', {
+      execution_id: executionId,
+      message: 'Cancellation requested; waiting for the process to finish starting.',
+    })
+    return
+  }
+
+  if (entry.cancelSignalSent) {
+    socket?.emit('command:cancelling', {
+      execution_id: executionId,
+      message: 'Cancellation is already in progress.',
+    })
+    return
+  }
+
+  entry.cancelSignalSent = true
+  io.emit('command:cancelling', {
+    execution_id: executionId,
+    message: 'Cancellation requested; stopping process.',
+  })
+
+  signalProcess(entry, 'SIGTERM')
+
+  if (entry.cancelKillTimer) clearTimeout(entry.cancelKillTimer)
+  const killTimer = setTimeout(() => {
+    if (!activeCommands.has(executionId)) return
+    signalProcess(entry, 'SIGKILL')
+  }, 5000)
+  entry.cancelKillTimer = killTimer
+
+  proc.once('close', () => {
+    if (entry.cancelKillTimer === killTimer) entry.cancelKillTimer = undefined
+    clearTimeout(killTimer)
+  })
+}
+
+function applyPendingCancel(io: SocketIOServer, executionId: number, entry: ProcessEntry): void {
+  if (!entry.cancelRequested) return
+  requestCancel(io, executionId, entry)
 }
 
 /**
@@ -558,6 +730,8 @@ export function registerCommandHandlers(
         startedAt,
         detached: isAi,
         cancelled: false,
+        cancelRequested: false,
+        cancelSignalSent: false,
       }
       activeCommands.set(executionId, entry)
 
@@ -595,39 +769,21 @@ export function registerCommandHandlers(
   socket.on('command:cancel', (payload?: { execution_id?: number }) => {
     try {
       const targetId = payload?.execution_id
-      if (!targetId) return
-
-      const entry = activeCommands.get(targetId)
-      if (!entry) return
-
-      entry.cancelled = true
-
-      const proc = entry.process
-      if (!proc) return  // Process not yet spawned
-      const pid = proc.pid
-
-      // Only use process group kill (-pid) for detached processes (AI commands).
-      // Non-detached utility commands should be killed directly via proc.kill().
-      if (entry.detached && pid) {
-        try { process.kill(-pid, 'SIGTERM') } catch { proc.kill('SIGTERM') }
-      } else {
-        proc.kill('SIGTERM')
+      if (typeof targetId !== 'number') {
+        emitCancelError(socket, undefined, 'invalid_request', 'Invalid cancellation request: execution_id is required.')
+        return
       }
 
-      // Escalate to SIGKILL after timeout
-      const killTimer = setTimeout(() => {
-        if (!activeCommands.has(targetId)) return
-        if (entry.detached && pid) {
-          try { process.kill(-pid, 'SIGKILL') } catch { /* already dead */ }
-        }
-        proc.kill('SIGKILL')
-      }, 5000)
+      const entry = activeCommands.get(targetId)
+      if (!entry) {
+        emitCancelError(socket, targetId, 'not_active', 'Command is no longer running in this dashboard process.')
+        return
+      }
 
-      // Clear timer when process exits
-      proc.once('close', () => clearTimeout(killTimer))
+      requestCancel(io, targetId, entry, socket)
     } catch (err) {
       console.error('Error in command:cancel handler:', err)
-      socket.emit('error', { message: 'Internal error' })
+      emitCancelError(socket, payload?.execution_id, 'internal_error', 'Internal error while cancelling command.')
     }
   })
 }
@@ -686,7 +842,7 @@ function spawnCliCommand(
   })
 
   proc.on('close', (code) => {
-    const finalCode = code ?? (entry.cancelled ? -2 : -1)
+    const finalCode = entry.cancelled ? -2 : code ?? -1
     finishExecution(io, db, ocrDir, executionId, finalCode, entry.outputBuffer)
   })
 
@@ -694,6 +850,8 @@ function spawnCliCommand(
     entry.outputBuffer += `Process error: ${err.message}`
     finishExecution(io, db, ocrDir, executionId, -1, entry.outputBuffer)
   })
+
+  applyPendingCancel(io, executionId, entry)
 }
 
 // ── AI workflow command spawn (adapter strategy) ──
@@ -925,6 +1083,7 @@ function spawnAiCommand(
    * the AI's `ocr session start-instance` calls populate) into the feed.
    */
   function emitStreamEvent(evt: NormalizedEvent): void {
+    refreshActiveCommandHeartbeat()
     const stream: StreamEvent = {
       ...evt,
       executionId,
@@ -934,6 +1093,23 @@ function spawnAiCommand(
     }
     journal.append(stream)
     io.emit('command:event', stream)
+  }
+
+  function refreshActiveCommandHeartbeat(): void {
+    const now = Date.now()
+    if (
+      entry.lastStreamHeartbeatAt &&
+      now - entry.lastStreamHeartbeatAt < STREAM_HEARTBEAT_INTERVAL_MS
+    ) {
+      return
+    }
+    entry.lastStreamHeartbeatAt = now
+    try {
+      bumpAgentSessionHeartbeat(db, entry.uid)
+      saveDb(db, ocrDir)
+    } catch (err) {
+      console.warn('[command-runner] failed to refresh stream heartbeat:', err)
+    }
   }
 
   function handleEvent(evt: NormalizedEvent): void {
@@ -983,6 +1159,48 @@ function spawnAiCommand(
         // idempotent (COALESCE) so repeated session_id events from the
         // vendor stream are safe.
         sessionCapture.recordSessionId(executionId, evt.id)
+        emitStreamEvent(evt)
+        break
+      }
+      case 'usage': {
+        const row = db.exec(
+          `SELECT uid, workflow_id, vendor, vendor_session_id, resolved_model
+           FROM command_executions
+           WHERE id = ?`,
+          [executionId],
+        )[0]
+        const values = row?.values[0]
+        const workflowId = values?.[1] as string | null | undefined
+        const vendor = values?.[2] as string | null | undefined
+        if (workflowId && vendor) {
+          try {
+            const usageRow = recordTokenUsage(db, {
+              workflow_id: workflowId,
+              agent_session_id: (values?.[0] as string | null | undefined) ?? null,
+              vendor,
+              vendor_session_id: (values?.[3] as string | null | undefined) ?? null,
+              model: (values?.[4] as string | null | undefined) ?? null,
+              input_tokens: evt.inputTokens,
+              output_tokens: evt.outputTokens,
+              cache_read_tokens: evt.cacheReadTokens,
+              cache_write_tokens: evt.cacheWriteTokens,
+              reasoning_tokens: evt.reasoningTokens,
+              total_tokens: evt.totalTokens,
+              cost_usd: evt.costUsd ?? null,
+              source: 'vendor_event',
+              raw_usage_json: evt.raw ? JSON.stringify(evt.raw) : null,
+            })
+            saveDb(db, ocrDir)
+            io.emit('token_usage:updated', {
+              workflow_id: workflowId,
+              execution_id: executionId,
+              row_id: usageRow.id,
+              total_tokens: usageRow.total_tokens,
+            })
+          } catch (err) {
+            console.warn('[command-runner] failed to record token usage:', err)
+          }
+        }
         emitStreamEvent(evt)
         break
       }
@@ -1051,7 +1269,7 @@ function spawnAiCommand(
     // Append stderr if process failed — emit as a structured error event
     // too so timeline renderers can render it inline rather than the
     // legacy raw-text appendix.
-    if (code !== 0 && stderrBuffer) {
+    if (!entry.cancelled && code !== 0 && stderrBuffer) {
       const errContent = `\n\nError output:\n${stderrBuffer}`
       entry.outputBuffer += errContent
       io.emit('command:output', { execution_id: executionId, content: errContent })
@@ -1070,7 +1288,7 @@ function spawnAiCommand(
     journal.close().catch((err) => {
       console.error('[event-journal] close failed:', err)
     })
-    const finalCode = code ?? (entry.cancelled ? -2 : -1)
+    const finalCode = entry.cancelled ? -2 : code ?? -1
     finishExecution(io, db, ocrDir, executionId, finalCode, entry.outputBuffer)
   })
 
@@ -1089,6 +1307,8 @@ function spawnAiCommand(
     io.emit('command:output', { execution_id: executionId, content: errContent })
     finishExecution(io, db, ocrDir, executionId, -1, entry.outputBuffer)
   })
+
+  applyPendingCancel(io, executionId, entry)
 }
 
 // ── Shared helpers ──
@@ -1103,6 +1323,17 @@ function finishExecution(
 ): void {
   const finishedAt = new Date().toISOString()
   const entry = activeCommands.get(executionId)
+  if (!entry) {
+    const existing = db.exec(
+      'SELECT finished_at FROM command_executions WHERE id = ?',
+      [executionId],
+    )
+    if (existing[0]?.values[0]?.[0]) return
+  }
+  if (entry?.cancelKillTimer) {
+    clearTimeout(entry.cancelKillTimer)
+    entry.cancelKillTimer = undefined
+  }
 
   db.run(
     `UPDATE command_executions

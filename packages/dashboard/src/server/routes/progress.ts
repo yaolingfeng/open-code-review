@@ -17,6 +17,8 @@ import {
   getRoundProgress,
   upsertRoundProgress,
   deleteRoundProgress,
+  getSectionsForRun,
+  getFilesForSection,
   saveDb,
   type FindingProgressRow,
   type RoundProgressRow,
@@ -127,7 +129,36 @@ export function createProgressRouter(db: Database, ocrDir: string): Router {
     }
   })
 
-  // PATCH /api/findings/:id/progress — Update finding triage status
+  // DELETE /api/map-runs/:id/progress — Clear progress for every file in the map run
+  router.delete('/map-runs/:id/progress', (req, res) => {
+    try {
+      const runId = parseInt(req.params['id'] as string, 10)
+      if (isNaN(runId)) {
+        res.status(400).json({ error: 'Invalid map run ID' })
+        return
+      }
+
+      const runResult = db.exec('SELECT id FROM map_runs WHERE id = ?', [runId])
+      if (runResult.length === 0 || runResult[0]?.values.length === 0) {
+        res.status(404).json({ error: 'Map run not found' })
+        return
+      }
+
+      const sections = getSectionsForRun(db, runId)
+      for (const section of sections) {
+        for (const file of getFilesForSection(db, section.id)) {
+          deleteFileProgress(db, file.id)
+        }
+      }
+
+      debouncedSave(db, ocrDir)
+      res.status(200).json({ deleted: true })
+    } catch (err) {
+      console.error('Failed to clear map run progress:', err)
+      res.status(500).json({ error: 'Failed to clear map run progress' })
+    }
+  })
+
   router.patch('/findings/:id/progress', (req, res) => {
     try {
       const findingId = parseInt(req.params['id'] as string, 10)

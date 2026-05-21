@@ -20,7 +20,7 @@ vi.mock('../../../lib/utils', () => ({
   fetchApi: fetchApiMock,
 }))
 
-import { useMapRun, useMapSectionDetail } from '../hooks/use-map-run'
+import { useMapRun, useMapSectionDetail, useClearMapProgress } from '../hooks/use-map-run'
 
 describe('use-map-run hook contracts', () => {
   beforeEach(() => {
@@ -79,5 +79,34 @@ describe('use-map-run hook contracts', () => {
 
     expect(options.queryKey).toEqual(['sessions', 'session-1', 'runs', 2, 'sections', null])
     expect(options.enabled).toBe(false)
+  })
+
+  it('clears map progress and invalidates both summary and section detail queries', async () => {
+    const invalidateQueries = vi.fn()
+    useQueryClientMock.mockReturnValue({
+      invalidateQueries,
+      cancelQueries: vi.fn(),
+      getQueryData: vi.fn(),
+      getQueriesData: vi.fn().mockReturnValue([]),
+      setQueryData: vi.fn(),
+    })
+
+    const mutation = useClearMapProgress('session-1', 2) as {
+      mutationFn: (runId: number) => Promise<unknown>
+      onSuccess: () => void
+    }
+
+    await mutation.mutationFn(7)
+    expect(fetchApiMock).toHaveBeenCalledWith('/api/map-runs/7/progress', {
+      method: 'DELETE',
+    })
+
+    mutation.onSuccess()
+    expect(invalidateQueries).toHaveBeenNthCalledWith(1, {
+      queryKey: ['sessions', 'session-1', 'runs', 2],
+    })
+    expect(invalidateQueries).toHaveBeenNthCalledWith(2, {
+      queryKey: ['sessions', 'session-1', 'runs', 2, 'sections'],
+    })
   })
 })

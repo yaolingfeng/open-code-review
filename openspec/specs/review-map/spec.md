@@ -5,29 +5,23 @@ TBD - created by archiving change add-review-map. Update Purpose after archive.
 ## Requirements
 ### Requirement: Map Architect Orchestration
 
-The system SHALL provide a Map Architect agent that orchestrates the review map generation process, analyzing change topology and coordinating specialized agents to produce a comprehensive review map.
+The Map Architect workflow SHALL use graph context when available to guide topology analysis, flow tracing, dependency grouping, and review ordering. The git-derived canonical changed file list SHALL remain the completeness source of truth.
 
-#### Scenario: Complete map orchestration
-- **GIVEN** user requests a review map
-- **WHEN** the Map Architect receives the request
-- **THEN** the Map Architect SHALL execute the map workflow:
-  1. Context Discovery (reuse from review workflow)
-  2. Topology Analysis (enumerate files, identify entry points)
-  3. Flow Tracing (trace dependencies with redundancy)
-  4. Requirements Mapping (if requirements provided)
-  5. Map Synthesis (produce ordered map with validation)
-  6. Present
+#### Scenario: Map uses graph topology
 
-#### Scenario: Canonical file list establishment
-- **GIVEN** a review map is initiated
-- **WHEN** the Map Architect begins topology analysis
-- **THEN** the Map Architect SHALL:
-  - Execute `git diff --name-only` (or equivalent) to get canonical file list
-  - Store the file list in session state
-  - Pass the canonical list to all downstream agents
-  - Use this list for completeness validation
+- **GIVEN** graph context exists for a map session
+- **WHEN** topology and flow analysis run
+- **THEN** Map Architect and Flow Analysts SHALL use graph-derived changed symbols, import, call, dependency, impact context, and changed-symbol precision signals to guide grouping and ordering
+- **AND** topology analysis SHOULD prefer symbol-level changed nodes over file-level changed nodes when precision is available
+- **AND** affected flows and test gaps SHOULD inform map synthesis priority notes
+- **AND** all canonical changed files SHALL still appear in the final map
 
----
+#### Scenario: Unsupported changed files in map
+
+- **GIVEN** changed files include files unsupported by the graph engine
+- **WHEN** map synthesis runs
+- **THEN** unsupported changed files SHALL still appear in the map checklist
+- **AND** the map MAY mark them as not covered by graph context
 
 ### Requirement: Flow Analyst Agents
 

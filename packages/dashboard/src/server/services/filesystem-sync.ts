@@ -26,6 +26,9 @@ type ArtifactType =
   | 'requirements-mapping'
   | 'context'
   | 'discovered-standards'
+  | 'graph-context'
+  | 'graph-review-analysis'
+  | 'usage'
 
 type ArtifactEvent = {
   sessionId: string
@@ -38,6 +41,17 @@ type ArtifactEvent = {
 
 function sqlNow(): string {
   return new Date().toISOString().replace('T', ' ').replace(/\.\d+Z$/, '')
+}
+
+function parseSqlTimestampAsUtc(value: string | number): Date {
+  if (typeof value === 'number') return new Date(value)
+  // SQLite's datetime('now') and sqlNow() both produce UTC timestamps without
+  // a timezone suffix. JavaScript otherwise treats "YYYY-MM-DD HH:mm:ss" as
+  // local time, which makes mtime skip checks drift by the local UTC offset.
+  if (/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$/.test(value)) {
+    return new Date(`${value.replace(' ', 'T')}Z`)
+  }
+  return new Date(value)
 }
 
 function queryFirst(
@@ -77,6 +91,8 @@ export class FilesystemSync {
   private watcher: FSWatcher | null = null
   private debounceTimers = new Map<string, ReturnType<typeof setTimeout>>()
   private onSync?: () => void
+  private fullScanDepth = 0
+  private pendingFullScanSave = false
 
   constructor(
     private db: Database,
@@ -92,13 +108,37 @@ export class FilesystemSync {
   async fullScan(): Promise<void> {
     if (!existsSync(this.sessionsDir)) return
 
-    const entries = readdirSync(this.sessionsDir, { withFileTypes: true })
-    for (const entry of entries) {
-      if (!entry.isDirectory()) continue
-      const sessionId = entry.name
-      const sessionDir = join(this.sessionsDir, sessionId)
-      this.syncSession(sessionId, sessionDir)
+    this.fullScanDepth++
+    try {
+      const entries = readdirSync(this.sessionsDir, { withFileTypes: true })
+      let scanned = 0
+      for (const entry of entries) {
+        if (!entry.isDirectory()) continue
+        const sessionId = entry.name
+        const sessionDir = join(this.sessionsDir, sessionId)
+        this.syncSession(sessionId, sessionDir)
+        scanned++
+        if (scanned % 10 === 0) {
+          await new Promise<void>((resolve) => setImmediate(resolve))
+        }
+      }
+    } finally {
+      this.fullScanDepth--
+      if (this.fullScanDepth === 0) {
+        const shouldSync = this.pendingFullScanSave
+        this.pendingFullScanSave = false
+        if (shouldSync) this.onSync?.()
+      }
     }
+  }
+
+  private requestSync(): void {
+    if (!this.onSync) return
+    if (this.fullScanDepth > 0) {
+      this.pendingFullScanSave = true
+      return
+    }
+    this.onSync()
   }
 
   private syncSession(sessionId: string, sessionDir: string): void {
@@ -194,6 +234,9 @@ export class FilesystemSync {
     const sessionArtifacts: [string, ArtifactType][] = [
       ['context.md', 'context'],
       ['discovered-standards.md', 'discovered-standards'],
+      ['graph-context.md', 'graph-context'],
+      ['graph-review-analysis.json', 'graph-review-analysis'],
+      ['usage.md', 'usage'],
     ]
     for (const [fileName, artifactType] of sessionArtifacts) {
       const filePath = join(sessionDir, fileName)
@@ -304,7 +347,7 @@ export class FilesystemSync {
       this.io?.emit('session:created', { id: sessionId, branch, workflow_type: workflowType, status, current_phase: phase })
     }
 
-    this.onSync?.()
+    this.requestSync()
   }
 
   // ── Artifact Check ──
@@ -329,7 +372,7 @@ export class FilesystemSync {
     if (!existingParsedAt) return false
     try {
       const mtime = statSync(filePath).mtime
-      const parsedAt = new Date(existingParsedAt as string)
+      const parsedAt = parseSqlTimestampAsUtc(existingParsedAt)
       return mtime <= parsedAt
     } catch {
       return false
@@ -1235,7 +1278,7 @@ export class FilesystemSync {
         this.debounceTimers.delete(filePath)
         try {
           this.processChangedFile(filePath)
-          this.onSync?.()
+          this.requestSync()
         } catch (err) {
           console.error(`[FilesystemSync] Error processing ${filePath}:`, err)
         }
@@ -1339,6 +1382,18 @@ export class FilesystemSync {
     }
     if (fileName === 'discovered-standards.md') {
       this.processGenericArtifact(sessionId, 'discovered-standards', filePath)
+      return
+    }
+    if (fileName === 'graph-context.md') {
+      this.processGenericArtifact(sessionId, 'graph-context', filePath)
+      return
+    }
+    if (fileName === 'graph-review-analysis.json') {
+      this.processGenericArtifact(sessionId, 'graph-review-analysis', filePath)
+      return
+    }
+    if (fileName === 'usage.md') {
+      this.processGenericArtifact(sessionId, 'usage', filePath)
       return
     }
   }

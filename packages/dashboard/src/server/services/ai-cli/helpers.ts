@@ -9,6 +9,7 @@ import { mkdirSync, writeFileSync, unlinkSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { randomUUID } from 'node:crypto'
+import type { NormalizedEvent } from './types.js'
 
 // ── Tool Detail Formatting ──
 // Converts tool_use blocks into human-readable terminal lines.
@@ -69,4 +70,149 @@ export function writeTempPrompt(prompt: string): string {
 
 export function cleanupTempFile(path: string): void {
   try { unlinkSync(path) } catch { /* ignore */ }
+}
+
+// ── Token Usage Extraction ──
+
+type UsageEvent = Extract<NormalizedEvent, { type: 'usage' }>
+
+function numberFrom(obj: Record<string, unknown>, keys: string[]): number | undefined {
+  for (const key of keys) {
+    const value = obj[key]
+    if (typeof value === 'number' && Number.isFinite(value) && value >= 0) {
+      return Math.trunc(value)
+    }
+    if (typeof value === 'string' && value.trim() !== '') {
+      const parsed = Number.parseFloat(value)
+      if (Number.isFinite(parsed) && parsed >= 0) {
+        return Math.trunc(parsed)
+      }
+    }
+  }
+  return undefined
+}
+
+function costFrom(obj: Record<string, unknown>, keys: string[]): number | undefined {
+  for (const key of keys) {
+    const value = obj[key]
+    if (typeof value === 'number' && Number.isFinite(value) && value >= 0) {
+      return value
+    }
+    if (typeof value === 'string' && value.trim() !== '') {
+      const parsed = Number.parseFloat(value)
+      if (Number.isFinite(parsed) && parsed >= 0) return parsed
+    }
+  }
+  return undefined
+}
+
+function objectFrom(value: unknown): Record<string, unknown> | null {
+  return value && typeof value === 'object' && !Array.isArray(value)
+    ? value as Record<string, unknown>
+    : null
+}
+
+/**
+ * Best-effort extraction of vendor token usage from structured CLI JSON.
+ *
+ * Vendor schemas move over time, so this intentionally accepts common
+ * snake_case/camelCase names used by Claude Code, Anthropic-style usage
+ * payloads, OpenCode provider payloads, and completion-style summaries.
+ */
+export function extractUsageEvent(parsed: Record<string, unknown>): UsageEvent | null {
+  const part = objectFrom(parsed['part'])
+  const partTokens = part ? objectFrom(part['tokens']) : null
+  const partTokenCache = partTokens ? objectFrom(partTokens['cache']) : null
+  const candidates = [
+    objectFrom(parsed['usage']),
+    objectFrom(parsed['tokens']),
+    objectFrom(parsed['tokenUsage']),
+    objectFrom(parsed['metadata']),
+    part,
+    partTokens,
+    partTokenCache,
+    parsed,
+  ].filter((candidate): candidate is Record<string, unknown> => candidate !== null)
+
+  let inputTokens: number | undefined
+  let outputTokens: number | undefined
+  let cacheReadTokens: number | undefined
+  let cacheWriteTokens: number | undefined
+  let reasoningTokens: number | undefined
+  let totalTokens: number | undefined
+  let costUsd: number | undefined
+
+  for (const candidate of candidates) {
+    inputTokens ??= numberFrom(candidate, [
+      'input_tokens',
+      'inputTokens',
+      'prompt_tokens',
+      'promptTokens',
+      'input',
+    ])
+    outputTokens ??= numberFrom(candidate, [
+      'output_tokens',
+      'outputTokens',
+      'completion_tokens',
+      'completionTokens',
+      'output',
+    ])
+    cacheReadTokens ??= numberFrom(candidate, [
+      'cache_read_input_tokens',
+      'cache_read_tokens',
+      'cacheReadInputTokens',
+      'cacheReadTokens',
+      'read',
+    ])
+    cacheWriteTokens ??= numberFrom(candidate, [
+      'cache_creation_input_tokens',
+      'cache_write_tokens',
+      'cacheCreationInputTokens',
+      'cacheWriteTokens',
+      'write',
+    ])
+    reasoningTokens ??= numberFrom(candidate, [
+      'reasoning_tokens',
+      'reasoningTokens',
+      'thinking_tokens',
+      'thinkingTokens',
+      'reasoning',
+    ])
+    totalTokens ??= numberFrom(candidate, [
+      'total_tokens',
+      'totalTokens',
+      'tokens',
+      'total',
+    ])
+    costUsd ??= costFrom(candidate, [
+      'cost_usd',
+      'costUsd',
+      'total_cost_usd',
+      'totalCostUsd',
+      'cost',
+    ])
+  }
+
+  const hasUsage =
+    inputTokens !== undefined ||
+    outputTokens !== undefined ||
+    cacheReadTokens !== undefined ||
+    cacheWriteTokens !== undefined ||
+    reasoningTokens !== undefined ||
+    totalTokens !== undefined ||
+    costUsd !== undefined
+
+  if (!hasUsage) return null
+
+  return {
+    type: 'usage',
+    ...(inputTokens !== undefined ? { inputTokens } : {}),
+    ...(outputTokens !== undefined ? { outputTokens } : {}),
+    ...(cacheReadTokens !== undefined ? { cacheReadTokens } : {}),
+    ...(cacheWriteTokens !== undefined ? { cacheWriteTokens } : {}),
+    ...(reasoningTokens !== undefined ? { reasoningTokens } : {}),
+    ...(totalTokens !== undefined ? { totalTokens } : {}),
+    ...(costUsd !== undefined ? { costUsd } : {}),
+    raw: parsed,
+  }
 }

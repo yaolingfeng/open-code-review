@@ -5,6 +5,7 @@ export type { SessionStatus, WorkflowType, FindingTriage, FindingSeverity, ChatT
 export type SessionSummary = {
   id: string
   branch: string
+  session_dir: string
   status: SessionStatus
   workflow_type: WorkflowType
   current_phase: string
@@ -387,6 +388,20 @@ export type GraphReviewAnalysis = {
     changedFileCount: number
     changedSymbolPrecision: 'symbol' | 'file' | 'none'
   }
+  performance?: {
+    phases: Array<{
+      phase: string
+      elapsedMs: number
+      nodeCount?: number
+      edgeCount?: number
+      downgradedReason?: string
+    }>
+    totalElapsedMs: number
+    nodeCount: number
+    edgeCount: number
+    truncationReason?: string
+    downgradedReason?: string
+  }
 }
 
 export type MapRun = {
@@ -475,6 +490,17 @@ export type NormalizedStreamEvent =
   | { type: 'tool_result'; toolId: string; output: string; isError: boolean }
   | { type: 'error'; source: 'agent' | 'process'; message: string; detail?: string }
   | { type: 'session_id'; id: string }
+  | {
+      type: 'usage'
+      inputTokens?: number
+      outputTokens?: number
+      cacheReadTokens?: number
+      cacheWriteTokens?: number
+      reasoningTokens?: number
+      totalTokens?: number
+      costUsd?: number
+      raw?: Record<string, unknown>
+    }
 
 export type StreamEvent = NormalizedStreamEvent & {
   executionId: number

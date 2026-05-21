@@ -155,7 +155,8 @@ export function CommandsPage() {
               bare
               output={activeTab.output}
               events={activeTab.events}
-              isRunning={activeTab.status === 'running'}
+              isRunning={activeTab.status === 'running' || activeTab.status === 'cancelling'}
+              isCancelling={activeTab.status === 'cancelling'}
               exitCode={activeTab.exitCode}
               commandName={activeTab.command}
               onCancel={handleCancel}

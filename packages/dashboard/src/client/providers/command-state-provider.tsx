@@ -21,7 +21,7 @@ import { useSocket, useSocketEvent } from './socket-provider'
 import { fetchApi } from '../lib/utils'
 import type { CommandEventsResponse, StreamEvent } from '../lib/api-types'
 
-export type TabStatus = 'running' | 'complete' | 'cancelled' | 'failed'
+export type TabStatus = 'running' | 'cancelling' | 'complete' | 'cancelled' | 'failed'
 
 export type CommandTab = {
   executionId: number
@@ -75,7 +75,7 @@ export function CommandStateProvider({ children }: { children: ReactNode }) {
   // Derived values
   const tabs = useMemo(() => Array.from(tabMap.values()), [tabMap])
   const runningCount = useMemo(
-    () => tabs.filter((t) => t.status === 'running').length,
+    () => tabs.filter((t) => t.status === 'running' || t.status === 'cancelling').length,
     [tabs],
   )
   const isRunning = useMemo(() => runningCount > 0, [runningCount])
@@ -221,6 +221,49 @@ export function CommandStateProvider({ children }: { children: ReactNode }) {
     },
   )
 
+  useSocketEvent<{ execution_id: number; message?: string }>(
+    'command:cancelling',
+    (data) => {
+      setTabMap((prev) => {
+        const existing = prev.get(data.execution_id)
+        if (!existing) return prev
+
+        const next = new Map(prev)
+        next.set(data.execution_id, {
+          ...existing,
+          status: 'cancelling',
+          output: data.message ? `${existing.output}▸ ${data.message}\n` : existing.output,
+        })
+        return next
+      })
+    },
+  )
+
+  useSocketEvent<{ execution_id?: number; code?: string; error: string }>(
+    'command:cancel:error',
+    (data) => {
+      const executionId = data.execution_id
+      if (typeof executionId !== 'number') return
+      setTabMap((prev) => {
+        const existing = prev.get(executionId)
+        if (!existing) return prev
+
+        const next = new Map(prev)
+        next.set(executionId, {
+          ...existing,
+          status:
+            data.code === 'not_active'
+              ? 'failed'
+              : existing.status === 'cancelling'
+                ? 'running'
+                : existing.status,
+          output: `${existing.output}\n[cancel] ${data.error}\n`,
+        })
+        return next
+      })
+    },
+  )
+
   // Actions
   const dismissTab = useCallback(
     (id: number) => {
@@ -243,6 +286,13 @@ export function CommandStateProvider({ children }: { children: ReactNode }) {
 
   const cancelCommand = useCallback(
     (executionId: number) => {
+      setTabMap((prev) => {
+        const existing = prev.get(executionId)
+        if (!existing || existing.status !== 'running') return prev
+        const next = new Map(prev)
+        next.set(executionId, { ...existing, status: 'cancelling' })
+        return next
+      })
       socket?.emit('command:cancel', { execution_id: executionId })
     },
     [socket],

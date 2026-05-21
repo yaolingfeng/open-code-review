@@ -5,33 +5,23 @@ Review orchestration defines the 8-phase multi-agent code review workflow — fr
 ## Requirements
 ### Requirement: Tech Lead Orchestration
 
-The system SHALL provide a Tech Lead agent that orchestrates the complete code review process, coordinating context discovery, requirements analysis, reviewer assignment, discourse facilitation, and final synthesis.
+The Tech Lead workflow SHALL use graph context when available to guide code exploration, reviewer assignment, test-gap awareness, and impact analysis. Graph context SHALL NOT be the sole basis for review findings or final verdict.
 
-#### Scenario: Complete review orchestration
-- **GIVEN** user requests a code review
-- **WHEN** the Tech Lead receives the request
-- **THEN** Tech Lead SHALL execute the 8-phase workflow:
-  1. Context Discovery (including requirements/specs)
-  2. Gather Change Context
-  3. Tech Lead Analysis
-  4. Spawn Reviewers (with Redundancy)
-  5. Aggregate Redundant Findings
-  6. Discourse (unless --quick)
-  7. Synthesis
-  8. Present
+#### Scenario: Tech Lead uses graph context
 
-#### Scenario: Tech Lead analysis
-- **GIVEN** change context and requirements have been gathered
-- **WHEN** Tech Lead analyzes the change
-- **THEN** Tech Lead SHALL:
-  - Review requirements/specs to understand intended behavior
-  - Summarize what changed and why
-  - Evaluate changes against requirements
-  - Identify risks and areas of concern
-  - Select appropriate reviewers
-  - Create dynamic guidance per reviewer including requirements context
+- **GIVEN** graph context exists for a review session
+- **WHEN** Tech Lead performs analysis
+- **THEN** Tech Lead SHALL consider changed symbols, impacted files, test gaps, unsupported changed files, graph warnings, and changed-symbol precision signals
+- **AND** review prioritization SHOULD be influenced by test gaps, affected flows, and symbol-level impact
+- **AND** Tech Lead SHALL treat graph output as context for investigation rather than authoritative evidence
 
----
+#### Scenario: Reviewer receives graph context
+
+- **GIVEN** graph context exists for a review session
+- **WHEN** reviewer tasks are spawned
+- **THEN** each reviewer SHALL receive graph context
+- **AND** reviewers MAY use `ocr graph query` for focused exploration
+- **AND** reviewers SHALL NOT report findings solely because graph output says a node is risky
 
 ### Requirement: Requirements Context Input
 

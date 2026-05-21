@@ -67,6 +67,30 @@ describe('ClaudeCodeAdapter', () => {
         message: 'rate limited',
       })
     })
+
+    it('parses result usage into a normalized usage event', () => {
+      const events = adapter.parseLine(JSON.stringify({
+        type: 'result',
+        session_id: 'sess-1',
+        usage: {
+          input_tokens: 100,
+          output_tokens: 40,
+          cache_read_input_tokens: 7,
+          cache_creation_input_tokens: 3,
+        },
+        total_cost_usd: 0.012,
+      }))
+
+      expect(events).toContainEqual({
+        type: 'usage',
+        inputTokens: 100,
+        outputTokens: 40,
+        cacheReadTokens: 7,
+        cacheWriteTokens: 3,
+        costUsd: 0.012,
+        raw: expect.any(Object),
+      })
+    })
   })
 
   describe('createParser() — stateful streaming tool input assembly', () => {

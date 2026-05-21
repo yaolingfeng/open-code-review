@@ -14,7 +14,7 @@ import { randomBytes } from 'node:crypto'
 import { Server as SocketIOServer } from 'socket.io'
 
 import { resolveOcrDir } from './services/ocr-resolver.js'
-import { openDb, closeDb, saveDb, registerSaveHooks, getAllRounds, getReviewerOutputsForRound, getRoundProgress } from './db.js'
+import { openDb, closeDb, saveDb, registerSaveHooks, markShuttingDown, getAllRounds, getReviewerOutputsForRound, getRoundProgress } from './db.js'
 import { registerSocketHandlers } from './socket/handlers.js'
 import { createSessionsRouter } from './routes/sessions.js'
 import { createReviewsRouter } from './routes/reviews.js'
@@ -30,11 +30,13 @@ import { createReviewersRouter, watchReviewersMeta } from './routes/reviewers.js
 import { createAgentSessionsRouter } from './routes/agent-sessions.js'
 import { createHandoffRouter } from './routes/handoff.js'
 import { createTeamRouter } from './routes/team.js'
+import { createGraphRouter } from './routes/graph.js'
+import { createUsageRouter } from './routes/usage.js'
 import { AiCliService } from './services/ai-cli/index.js'
 import { createSessionCaptureService } from './services/capture/session-capture-service.js'
 import { FilesystemSync } from './services/filesystem-sync.js'
 import { DbSyncWatcher } from './services/db-sync-watcher.js'
-import { registerCommandHandlers } from './socket/command-runner.js'
+import { completeActiveCommandFromDisk, registerCommandHandlers } from './socket/command-runner.js'
 import { registerChatHandlers, cleanupAllChats } from './socket/chat-handler.js'
 import { registerPostHandlers, cleanupAllPostGenerations } from './socket/post-handler.js'
 import { flushSave } from './routes/progress.js'
@@ -55,6 +57,22 @@ function shortenPath(p: string): string {
 function isLocalhostOrigin(origin: string | undefined): boolean {
   if (!origin) return false
   return /^https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/.test(origin)
+}
+
+function withTimeout<T>(promise: Promise<T>, ms: number, message: string): Promise<T> {
+  return new Promise<T>((resolve, reject) => {
+    const timer = setTimeout(() => reject(new Error(message)), ms)
+    promise.then(
+      (value) => {
+        clearTimeout(timer)
+        resolve(value)
+      },
+      (err) => {
+        clearTimeout(timer)
+        reject(err)
+      },
+    )
+  })
 }
 
 // ── Bearer token authentication ──
@@ -314,8 +332,21 @@ export async function startServer(options: StartServerOptions = {}): Promise<voi
   // ── API Routes ──
 
   // GET /api/reviews — all review rounds across sessions
-  app.get('/api/reviews', (_req, res) => {
+  app.get('/api/reviews', async (_req, res) => {
     try {
+      try {
+        await withTimeout(
+          syncArtifactsOnce(),
+          1500,
+          'artifact sync timed out before /api/reviews',
+        )
+      } catch (err) {
+        console.warn(
+          `[dashboard] Serving /api/reviews from current DB snapshot: ${
+            err instanceof Error ? err.message : String(err)
+          }`,
+        )
+      }
       const rounds = getAllRounds(db).map((r) => ({
         ...r,
         reviewer_outputs: getReviewerOutputsForRound(db, r.id),
@@ -332,11 +363,13 @@ export async function startServer(options: StartServerOptions = {}): Promise<voi
   app.use('/api/sessions', createReviewsRouter(db))
   app.use('/api/sessions', createMapsRouter(db))
   app.use('/api/sessions', createArtifactsRouter(db))
+  app.use('/api/sessions', createUsageRouter(db))
   app.use('/api', createProgressRouter(db, ocrDir))
   app.use('/api/notes', createNotesRouter(db, ocrDir))
   app.use('/api/stats', createStatsRouter(db))
   app.use('/api/commands', createCommandsRouter(db, ocrDir))
   app.use('/api/config', createConfigRouter(ocrDir, aiCliService))
+  app.use('/api/graph', createGraphRouter(ocrDir))
   app.use('/api/sessions', createChatRouter(db, ocrDir))
   app.use('/api/reviewers', createReviewersRouter(ocrDir))
   // Pull-on-read for agent_session-backed routes: they read tables
@@ -346,7 +379,17 @@ export async function startServer(options: StartServerOptions = {}): Promise<voi
   // remains the push-based path for socket.io invalidation events.
   // The actual `pullSync` callback is wired below after DbSyncWatcher
   // is constructed; the hook here is closure-captured.
-  let pullSync: () => void = () => {}
+  let pullSync: () => void | Promise<void> = () => {}
+  let artifactSync: () => Promise<void> = async () => {}
+  let artifactSyncInFlight: Promise<void> | null = null
+  const syncArtifactsOnce = async (): Promise<void> => {
+    if (!artifactSyncInFlight) {
+      artifactSyncInFlight = artifactSync().finally(() => {
+        artifactSyncInFlight = null
+      })
+    }
+    await artifactSyncInFlight
+  }
   // Single SessionCaptureService instance shared across the route + the
   // command-runner. Avoids the previous "two default-constructed services"
   // shape — both surfaces now write through the same façade, so future
@@ -409,6 +452,16 @@ export async function startServer(options: StartServerOptions = {}): Promise<voi
     (session) => {
       sessionCapture.autoLinkPendingDashboardExecution(session.id)
     },
+    (execution) => {
+      completeActiveCommandFromDisk(
+        io,
+        db,
+        ocrDir,
+        execution.id,
+        execution.exit_code,
+        execution.finished_at,
+      )
+    },
   )
   await dbSyncWatcher.init()
   dbSyncWatcher.startWatching()
@@ -421,7 +474,7 @@ export async function startServer(options: StartServerOptions = {}): Promise<voi
   // Register global save hooks so every saveDb() call automatically
   // merges CLI changes before writing and marks its own write.
   registerSaveHooks(
-    () => dbSyncWatcher.syncFromDisk(),
+    () => dbSyncWatcher.syncFromDisk(true),
     () => dbSyncWatcher.markOwnWrite(),
   )
 
@@ -431,6 +484,7 @@ export async function startServer(options: StartServerOptions = {}): Promise<voi
 
   const sessionsDir = join(ocrDir, 'sessions')
   const fsSync = new FilesystemSync(db, sessionsDir, io, () => saveDb(db, ocrDir))
+  artifactSync = () => fsSync.fullScan()
   await fsSync.fullScan()
   saveDb(db, ocrDir)
   fsSync.startWatching()
@@ -503,10 +557,32 @@ export async function startServer(options: StartServerOptions = {}): Promise<voi
 
   // ── Graceful shutdown ──
 
+  let isShuttingDown = false
+
   const shutdown = (signal?: NodeJS.Signals): void => {
+    if (isShuttingDown) {
+      // Second signal — force exit immediately
+      process.exit(1)
+    }
+    isShuttingDown = true
+
     console.log(
       `Shutting down dashboard server${signal ? ` (received ${signal})` : ''}...`,
     )
+
+    // Mark DB layer as shutting down FIRST — this prevents saveDb()'s
+    // preSaveHook from triggering syncFromDisk(), which can create a
+    // feedback loop (saveDb → syncFromDisk → onSync → saveDb) that
+    // blocks the event loop and prevents this very function from completing.
+    markShuttingDown()
+
+    // Stop watchers to prevent new sync operations from blocking
+    // the event loop during cleanup. This is critical — if watchers keep
+    // firing, their synchronous syncFromDisk() calls starve the event
+    // loop and prevent this very function from completing.
+    dbSyncWatcher.stopWatching()
+    fsSync.stopWatching()
+    stopReviewersWatch()
 
     // Remove PID and port tracking files
     try { unlinkSync(pidFilePath) } catch { /* ignore */ }
@@ -559,12 +635,9 @@ export async function startServer(options: StartServerOptions = {}): Promise<voi
     // Flush any pending debounced progress writes (500ms window)
     try { flushSave() } catch { /* ignore */ }
 
-    // Flush all pending changes before stopping watchers
+    // Flush all pending changes before closing connections
     try { saveDb(db, ocrDir) } catch { /* DB may not be writable during shutdown */ }
 
-    dbSyncWatcher.stopWatching()
-    fsSync.stopWatching()
-    stopReviewersWatch()
     io.close()
     // Without this, keep-alive connections from the Vite dev proxy
     // (long-lived `/socket.io` upgrades, /api keep-alives) hold the

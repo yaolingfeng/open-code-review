@@ -31,6 +31,7 @@ Delete the existing session and start from scratch:
 ```bash
 rm -rf "$SESSION_DIR"
 mkdir -p "$SESSION_DIR/rounds/round-1/reviews"
+OCR_STATE_INIT_FRESH_FLAG="--fresh"
 ```
 Then proceed to Phase 1.
 
@@ -159,7 +160,8 @@ ocr state init \
   --session-id "$SESSION_ID" \
   --branch "$BRANCH" \
   --workflow-type review \
-  --session-dir "$SESSION_DIR"
+  --session-dir "$SESSION_DIR" \
+  ${OCR_STATE_INIT_FRESH_FLAG:-}
 
 # Transition to context phase
 ocr state transition --phase "context" --phase-number 1
@@ -295,7 +297,31 @@ See `references/context-discovery.md` for detailed algorithm.
    mkdir -p .ocr/sessions/$SESSION_ID/rounds/round-1/reviews
    ```
 
-4. Save context to `context.md`:
+4. Generate graph context and graph review analysis (best-effort):
+   ```bash
+   CHANGED_FILES=$(git diff --cached --name-only | paste -sd, -)
+   ocr graph context \
+     --workflow review \
+     --files "$CHANGED_FILES" \
+     --session-dir "$SESSION_DIR" \
+     --json >/tmp/ocr-graph-context.json
+
+   ocr graph review-analysis \
+     --workflow review \
+     --files "$CHANGED_FILES" \
+     --session-dir "$SESSION_DIR" \
+     --json >/tmp/ocr-graph-review-analysis.json
+   ```
+
+   - This writes `graph-context.md`, `graph-context.json`, and `graph-review-analysis.json` at the session root.
+   - `graph-review-analysis.json` is summary-first: use its summary, priorities, review order, key hints, and module summaries by default; do not inject full drilldown payloads when a concise summary is enough.
+   - `--fresh` only resets review session state and artifacts. It does **not** rebuild or update `.ocr/data/graph.db`.
+   - Graph refresh is always explicit: run `ocr graph update` or `ocr graph build --full` before review if fresh graph data is required.
+   - If `.ocr/data/graph.db` is missing, stale, or partially unsupported, continue the review. Graph outputs are advisory investigative context.
+   - `changedFiles` remains the canonical review scope; when git diff hunks are available, graph context also narrows `changedNodes` to changed symbols and records `changedRanges`.
+   - Unsupported changed files must remain in the review scope and require manual dependency tracing.
+
+5. Save context to `context.md`:
    ```markdown
    # Review Context
 
@@ -310,6 +336,12 @@ See `references/context-discovery.md` for detailed algorithm.
    ## Affected Files
    - path/to/file1.ts
    - path/to/file2.ts
+
+   ## Graph Review Analysis
+   [Summarize graph-review-analysis.json if present: summary, priorities, suggested review order, key hints, module or architecture summaries, warnings]
+
+   ## Graph Context
+   [Summarize graph-context.md if present: risk level, changed symbols, changed ranges, impacted files, test gaps, unsupported changed files, warnings]
    ```
 
 ### Phase 2 Checkpoint
@@ -318,6 +350,7 @@ See `references/context-discovery.md` for detailed algorithm.
 - [ ] Session directory created: `.ocr/sessions/{id}/`
 - [ ] `rounds/round-1/reviews/` subdirectory created
 - [ ] `context.md` written with change summary
+- [ ] `graph-context.md/json` and `graph-review-analysis.json` generated when graph commands run, or missing-graph warning recorded without blocking
 
 ---
 
@@ -355,7 +388,20 @@ See `references/context-discovery.md` for detailed algorithm.
    - What is the likely intent?
    - What are the potential risk areas?
 
-4. Create dynamic guidance for reviewers:
+4. Read graph review analysis and graph context if available:
+   ```bash
+   cat "$SESSION_DIR/graph-review-analysis.json" 2>/dev/null
+   cat "$SESSION_DIR/graph-context.md" 2>/dev/null
+   ```
+
+   Use graph signals to refine guidance:
+   - Changed symbols and changed ranges can focus reviewer attention inside large files.
+   - Impact radius can prioritize files and symbols for deeper inspection.
+   - Test gaps can inform testing-focused reviewer prompts.
+   - Unsupported changed files must be called out for manual tracing.
+   - Do not treat graph-only risk as a finding unless the source or diff confirms it.
+
+5. Create dynamic guidance for reviewers:
    ```markdown
    ## Tech Lead Guidance
 
@@ -387,9 +433,21 @@ See `references/context-discovery.md` for detailed algorithm.
    - Check for proper error handling
    - Ensure tests cover edge cases
    - Verify rate limiting is implemented
+
+   ### Graph Review Analysis
+   - Summary / priorities / suggested review order / key hints: [from graph-review-analysis.json]
+   - Module or architecture summaries: [from graph-review-analysis.json]
+   - Warning: Use the summary-first view by default; fetch deeper graph detail only on demand.
+
+   ### Graph Context
+   - Changed symbols / changed ranges: [from graph-context.md]
+   - Impacted files/symbols: [from graph-context.md]
+   - Test gaps: [from graph-context.md]
+   - Unsupported changed files: [from graph-context.md]
+   - Warning: Graph outputs are advisory; verify against source/diff before reporting findings.
    ```
 
-4. **Read reviewer team from config** (REQUIRED):
+6. **Read reviewer team from config** (REQUIRED):
 
    ```bash
    # MUST read default_team from .ocr/config.yaml - do NOT use hardcoded values
@@ -421,11 +479,11 @@ See `references/context-discovery.md` for detailed algorithm.
    | Logic changes | + 1x Testing (if not in config) |
    | User says "add security" | + 1x Security |
 
-5. **Handle `--team` override** (if provided):
+7. **Handle `--team` override** (if provided):
 
    If the user passed `--team reviewer-id:count,...`, use those reviewers **instead of** `default_team` from config. Parse the comma-separated list into reviewer IDs and counts.
 
-6. **Handle `--reviewer` ephemeral reviewers** (if provided):
+8. **Handle `--reviewer` ephemeral reviewers** (if provided):
 
    Each `--reviewer "..."` value adds one ephemeral reviewer to the team. These are **in addition to** library reviewers (from `--team` or `default_team`).
 
@@ -540,10 +598,14 @@ See `references/context-discovery.md` for detailed algorithm.
    - Project context (from `discovered-standards.md`)
    - **Requirements context (from `requirements.md` if provided)**
    - Tech Lead guidance (including requirements assessment)
+   - Graph context from `graph-context.md` if present
    - The diff to review
    - **Instruction to explore codebase with full agency**
+   - Permission to call `ocr graph query ...` for follow-up context
 
 7. Save each review to `.ocr/sessions/{id}/rounds/round-{current_round}/reviews/{type}-{n}.md`.
+
+Reviewers may use graph context to choose what to inspect next, but every finding must cite concrete source, diff, test, or runtime evidence. Do not file findings based only on graph impact, inferred call edges, or unsupported-file warnings.
 
 See `references/reviewer-task.md` for the task template.
 
@@ -825,7 +887,16 @@ fi
    - Check for `gh` CLI: `which gh`
    - Post as PR comment: `gh pr comment {number} --body-file final.md`
 
-3. **Close the session**:
+3. **Export token usage artifacts** (best-effort):
+   ```bash
+   ocr usage export --workflow "$SESSION_ID" --session-dir "$SESSION_DIR"
+   ```
+
+   This writes `usage.md` and `usage.json` at the session root. If the active
+   vendor did not report token usage, the artifacts still record that no usage
+   rows were available. Do not block the review if usage is unavailable.
+
+4. **Close the session**:
    ```bash
    ocr state close
    ```
@@ -837,10 +908,11 @@ fi
    > - The session won't be picked up for resume
    > - The session remains accessible via `/ocr-history` and `/ocr-show`
 
-4. Confirm session saved:
+5. Confirm session saved:
    ```
    Review complete
    -> .ocr/sessions/{id}/rounds/round-{n}/final.md
+   -> .ocr/sessions/{id}/usage.md
    ```
 
 ---
@@ -856,4 +928,4 @@ fi
 | 5 | Compare redundant runs, `ocr state transition` | aggregated findings |
 | 6 | Reviewer discourse, `ocr state transition` | `rounds/round-{n}/discourse.md` |
 | 7 | Synthesize, pipe data to `ocr state round-complete --stdin`, write `final.md` | `rounds/round-{n}/round-meta.json` (CLI-written), `rounds/round-{n}/final.md` |
-| 8 | Display/post, `ocr state close` | Terminal output, GitHub |
+| 8 | Display/post, export token usage, `ocr state close` | Terminal output, GitHub, `usage.md/json` |

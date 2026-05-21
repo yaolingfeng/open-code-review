@@ -1,0 +1,16 @@
+{
+  "name": "graph",
+  "$schema": "../../../node_modules/nx/schemas/project-schema.json",
+  "sourceRoot": "packages/shared/graph/src",
+  "projectType": "library",
+  "tags": ["scope:shared", "type:util"],
+  "targets": {
+    "test": {
+      "executor": "@nx/vitest:test",
+      "outputs": ["{workspaceRoot}/coverage/packages/shared/graph"],
+      "options": {
+        "config": "packages/shared/graph/vitest.config.ts"
+      }
+    }
+  }
+}

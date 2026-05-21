@@ -47,6 +47,18 @@ export type NormalizedEvent =
   | { type: 'error'; source: 'agent' | 'process'; message: string; detail?: string }
   /** Vendor session id captured from the stream — used for resume bookmarking. */
   | { type: 'session_id'; id: string }
+  /** Token usage reported by the vendor stream or CLI summary. */
+  | {
+      type: 'usage'
+      inputTokens?: number
+      outputTokens?: number
+      cacheReadTokens?: number
+      cacheWriteTokens?: number
+      reasoningTokens?: number
+      totalTokens?: number
+      costUsd?: number
+      raw?: Record<string, unknown>
+    }
 
 // ── Stream Events ──
 // What command-runner persists to JSONL and emits via socket. Adds the

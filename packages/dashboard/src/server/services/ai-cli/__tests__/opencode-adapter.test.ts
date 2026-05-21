@@ -214,6 +214,69 @@ describe('OpenCodeAdapter', () => {
       })
     })
 
+    it('parses provider usage payloads into normalized usage events', () => {
+      const line = JSON.stringify({
+        type: 'step_finish',
+        timestamp: Date.now(),
+        sessionID: 's1',
+        usage: {
+          promptTokens: 120,
+          completionTokens: 30,
+          reasoningTokens: 5,
+          totalTokens: 155,
+          costUsd: 0.009,
+        },
+      })
+      const events = adapter.parseLine(line)
+
+      expect(events).toContainEqual({
+        type: 'usage',
+        inputTokens: 120,
+        outputTokens: 30,
+        reasoningTokens: 5,
+        totalTokens: 155,
+        costUsd: 0.009,
+        raw: expect.any(Object),
+      })
+    })
+
+    it('parses real OpenCode step_finish part tokens into normalized usage events', () => {
+      const line = JSON.stringify({
+        type: 'step_finish',
+        timestamp: Date.now(),
+        sessionID: 's1',
+        part: {
+          id: 'prt_usage',
+          type: 'step-finish',
+          reason: 'stop',
+          cost: 0.00000285,
+          tokens: {
+            total: 13,
+            input: 11,
+            output: 2,
+            reasoning: 0,
+            cache: {
+              read: 0,
+              write: 0,
+            },
+          },
+        },
+      })
+      const events = adapter.parseLine(line)
+
+      expect(events).toContainEqual({
+        type: 'usage',
+        inputTokens: 11,
+        outputTokens: 2,
+        cacheReadTokens: 0,
+        cacheWriteTokens: 0,
+        reasoningTokens: 0,
+        totalTokens: 13,
+        costUsd: 0.00000285,
+        raw: expect.any(Object),
+      })
+    })
+
     it('ignores step_start events (intra-process phases, not sub-agents)', () => {
       const line = JSON.stringify({
         type: 'step_start',

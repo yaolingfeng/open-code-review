@@ -160,4 +160,58 @@ describe('syncAgentSessions — CLI-mutable column equality check', () => {
 
     expect(replaceCalled).toBe(true)
   })
+
+  it('notifies when a running command is completed by an external CLI write', () => {
+    const completed: Array<{ id: number; exit_code: number | null; finished_at: string }> = []
+    const memoryDb = {
+      run: () => {},
+      exec: (sql: string) => {
+        if (sql.includes('SELECT last_heartbeat_at')) {
+          return [{
+            columns: ['last_heartbeat_at', 'finished_at', 'exit_code', 'workflow_id', 'vendor_session_id'],
+            values: [['2026-05-04T14:00:00Z', null, null, 'wf-1', 'vendor-abc']],
+          }]
+        }
+        return []
+      },
+      close: () => {},
+    } as unknown as Database
+
+    const fakeIo = {
+      emit: () => {},
+      to: () => ({ emit: () => {} }),
+    } as unknown as SocketIOServer
+
+    const w = new DbSyncWatcher(
+      memoryDb,
+      dbPath,
+      fakeIo,
+      undefined,
+      undefined,
+      (execution) => completed.push(execution),
+    )
+    const diskDb = {
+      exec: () => [{
+        columns: [
+          'id', 'uid', 'command', 'args', 'exit_code', 'started_at',
+          'finished_at', 'output', 'pid', 'is_detached', 'workflow_id',
+          'parent_id', 'vendor', 'vendor_session_id', 'persona',
+          'instance_index', 'name', 'resolved_model', 'last_heartbeat_at', 'notes',
+        ],
+        values: [[
+          7, 'uid-7', 'ocr review', '[]', 0, '2026-05-04T13:00:00Z',
+          '2026-05-04T14:05:00Z', null, 12345, 1, 'wf-1',
+          null, 'claude', 'vendor-abc', null,
+          null, null, null, '2026-05-04T14:00:00Z', null,
+        ]],
+      }],
+      close: () => {},
+    } as unknown as Database
+
+    ;(w as unknown as { syncAgentSessions: (d: Database) => void }).syncAgentSessions(diskDb)
+
+    expect(completed).toEqual([
+      { id: 7, exit_code: 0, finished_at: '2026-05-04T14:05:00Z' },
+    ])
+  })
 })
