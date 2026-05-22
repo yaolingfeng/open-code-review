@@ -328,6 +328,35 @@ const MIGRATIONS: Migration[] = [
       DROP TABLE IF EXISTS agent_sessions;
     `,
   },
+  {
+    version: 12,
+    description: "Add token usage ledger for review and map agent sessions",
+    sql: `
+      CREATE TABLE agent_token_usage (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        workflow_id TEXT NOT NULL REFERENCES sessions(id) ON DELETE RESTRICT,
+        agent_session_id TEXT REFERENCES command_executions(uid) ON DELETE SET NULL,
+        command_execution_id INTEGER REFERENCES command_executions(id) ON DELETE SET NULL,
+        vendor TEXT NOT NULL,
+        vendor_session_id TEXT,
+        model TEXT,
+        phase TEXT,
+        input_tokens INTEGER NOT NULL DEFAULT 0 CHECK(input_tokens >= 0),
+        output_tokens INTEGER NOT NULL DEFAULT 0 CHECK(output_tokens >= 0),
+        cache_read_tokens INTEGER NOT NULL DEFAULT 0 CHECK(cache_read_tokens >= 0),
+        cache_write_tokens INTEGER NOT NULL DEFAULT 0 CHECK(cache_write_tokens >= 0),
+        reasoning_tokens INTEGER NOT NULL DEFAULT 0 CHECK(reasoning_tokens >= 0),
+        total_tokens INTEGER NOT NULL DEFAULT 0 CHECK(total_tokens >= 0),
+        cost_usd REAL,
+        source TEXT NOT NULL DEFAULT 'manual' CHECK(source IN ('manual', 'vendor_event', 'estimated')),
+        raw_usage_json TEXT,
+        recorded_at TEXT NOT NULL DEFAULT (datetime('now'))
+      );
+      CREATE INDEX idx_agent_token_usage_workflow ON agent_token_usage(workflow_id);
+      CREATE INDEX idx_agent_token_usage_agent ON agent_token_usage(agent_session_id);
+      CREATE INDEX idx_agent_token_usage_vendor_session ON agent_token_usage(vendor, vendor_session_id);
+    `,
+  },
 ];
 
 /**

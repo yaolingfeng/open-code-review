@@ -1,0 +1,24 @@
+{
+  "name": "@open-code-review/graph",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Internal code graph engine for Open Code Review",
+  "type": "module",
+  "exports": {
+    ".": {
+      "types": "./src/index.ts",
+      "source": "./src/index.ts",
+      "default": "./src/index.ts"
+    }
+  },
+  "dependencies": {
+    "@vscode/tree-sitter-wasm": "^0.3.1",
+    "better-sqlite3": "12.10.0"
+  },
+  "devDependencies": {
+    "@types/better-sqlite3": "7.6.13",
+    "@types/node": "^22.10.5",
+    "typescript": "^5.7.3",
+    "vitest": "^3.0.4"
+  }
+}

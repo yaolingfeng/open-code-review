@@ -22,10 +22,14 @@ export type {
   InsertAgentSessionParams,
   InsertEventParams,
   InsertSessionParams,
+  InsertTokenUsageParams,
   Migration,
   SchemaVersionRow,
   SessionRow,
   SweepResult,
+  TokenUsageRow,
+  TokenUsageSource,
+  TokenUsageSummary,
   UpdateAgentSessionParams,
   UpdateSessionParams,
 } from "./types.js";
@@ -36,6 +40,7 @@ export {
   getSession,
   getLatestActiveSession,
   getAllSessions,
+  resetSessionForFreshStart,
   insertEvent,
   getEventsForSession,
   getLatestEventId,
@@ -47,6 +52,8 @@ export {
   listAgentSessionsForWorkflow,
   getLatestAgentSessionWithVendorId,
   bumpAgentSessionHeartbeat,
+  bumpWorkflowCommandHeartbeat,
+  completeWorkflowCommandExecutions,
   setAgentSessionVendorId,
   bindVendorSessionIdOpportunistically,
   recordVendorSessionIdForExecution,
@@ -55,6 +62,14 @@ export {
   updateAgentSession,
   sweepStaleAgentSessions,
 } from "./agent-sessions.js";
+
+export {
+  recordTokenUsage,
+  listTokenUsageForWorkflow,
+  summarizeTokenUsageForWorkflow,
+  renderTokenUsageMarkdown,
+  exportTokenUsageArtifacts,
+} from "./token-usage.js";
 
 export type { WorkflowType, SessionStatus } from "../state/types.js";
 

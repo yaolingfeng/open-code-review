@@ -48,6 +48,7 @@ type WorkflowOutputProps = {
    */
   events?: StreamEvent[]
   isRunning: boolean
+  isCancelling?: boolean
   exitCode: number | null
   commandName: string | null
   onCancel: () => void
@@ -65,6 +66,7 @@ export function WorkflowOutput({
   output,
   events,
   isRunning,
+  isCancelling = false,
   exitCode,
   commandName,
   onCancel,
@@ -107,7 +109,7 @@ export function WorkflowOutput({
                 <span className="relative inline-flex h-2 w-2 rounded-full bg-indigo-500" />
               </span>
               <span className="truncate text-xs font-medium text-zinc-600 dark:text-zinc-300">
-                Running <span className="capitalize">{summary.verb}</span>
+                {isCancelling ? 'Cancelling' : 'Running'} <span className="capitalize">{summary.verb}</span>
               </span>
             </>
           ) : (
@@ -131,14 +133,16 @@ export function WorkflowOutput({
             <button
               type="button"
               onClick={onCancel}
+              disabled={isCancelling}
               className={cn(
                 'flex items-center gap-1 rounded-md border px-2 py-0.5 text-xs font-medium transition-colors',
                 'border-zinc-300 text-zinc-600 hover:bg-zinc-100',
                 'dark:border-zinc-700 dark:text-zinc-400 dark:hover:bg-zinc-800',
+                isCancelling && 'cursor-not-allowed opacity-60 hover:bg-transparent dark:hover:bg-transparent',
               )}
             >
               <Square className="h-2.5 w-2.5" />
-              Cancel
+              {isCancelling ? 'Cancelling...' : 'Cancel'}
             </button>
           )}
           {exitCode !== null && (
@@ -220,7 +224,7 @@ export function WorkflowOutput({
             // Detect markdown headers for appropriate styling
             const headingMatch = segment.text.match(/^(#{1,6})\s+(.+)/)
             if (headingMatch) {
-              const level = headingMatch[1].length
+              const level = headingMatch[1]?.length ?? 0
               const text = headingMatch[2]
               const sizeClass = level <= 2 ? 'text-base font-semibold' : level <= 4 ? 'text-sm font-semibold' : 'text-sm font-medium'
               return (

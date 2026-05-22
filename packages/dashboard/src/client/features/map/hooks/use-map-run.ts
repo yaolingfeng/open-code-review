@@ -1,7 +1,20 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { useSocketEvent } from '../../../providers/socket-provider'
 import { fetchApi } from '../../../lib/utils'
-import type { MapRun, Artifact } from '../../../lib/api-types'
+import type { MapRun, MapSectionDetail, Artifact } from '../../../lib/api-types'
+
+function findSectionIdForFile(
+  detailQueries: Array<[readonly unknown[], MapSectionDetail | undefined]>,
+  fileId: number,
+): number | null {
+  for (const [, detail] of detailQueries) {
+    if (detail?.files.some((file) => file.id === fileId)) {
+      return detail.id
+    }
+  }
+
+  return null
+}
 
 export function useMapRun(sessionId: string, runNumber: number) {
   const queryClient = useQueryClient()
@@ -16,6 +29,27 @@ export function useMapRun(sessionId: string, runNumber: number) {
 
   useSocketEvent('artifact:updated', () => {
     queryClient.invalidateQueries({ queryKey })
+  })
+
+  return query
+}
+
+export function useMapSectionDetail(sessionId: string, runNumber: number, sectionId: number | null) {
+  const queryClient = useQueryClient()
+  const queryKey = ['sessions', sessionId, 'runs', runNumber, 'sections', sectionId]
+
+  const query = useQuery<MapSectionDetail>({
+    queryKey,
+    queryFn: () =>
+      fetchApi<MapSectionDetail>(`/api/sessions/${sessionId}/runs/${runNumber}/sections/${sectionId}`),
+    enabled: !!sessionId && runNumber > 0 && sectionId != null,
+    retry: false,
+  })
+
+  useSocketEvent('artifact:updated', () => {
+    queryClient.invalidateQueries({
+      queryKey: ['sessions', sessionId, 'runs', runNumber, 'sections'],
+    })
   })
 
   return query
@@ -49,33 +83,59 @@ export function useToggleFileReview(sessionId: string, runNumber: number) {
       })
     },
     onMutate: async ({ fileId, isReviewed }) => {
-      await queryClient.cancelQueries({ queryKey })
+      await Promise.all([
+        queryClient.cancelQueries({ queryKey }),
+        queryClient.cancelQueries({
+          queryKey: ['sessions', sessionId, 'runs', runNumber, 'sections'],
+        }),
+      ])
       const previous = queryClient.getQueryData<MapRun>(queryKey)
-      if (previous) {
+      const detailQueries = queryClient.getQueriesData<MapSectionDetail>({
+        queryKey: ['sessions', sessionId, 'runs', runNumber, 'sections'],
+      })
+      const sectionId = findSectionIdForFile(detailQueries, fileId)
+      if (previous && sectionId != null) {
         queryClient.setQueryData<MapRun>(queryKey, {
           ...previous,
           sections: previous.sections.map((section) => ({
             ...section,
-            reviewed_count: section.files.some((f) => f.id === fileId)
-              ? section.reviewed_count + (isReviewed ? 1 : -1)
-              : section.reviewed_count,
-            files: section.files.map((f) =>
-              f.id === fileId
-                ? { ...f, is_reviewed: isReviewed, reviewed_at: isReviewed ? new Date().toISOString() : null }
-                : f,
-            ),
+            reviewed_count: section.reviewed_count + (section.id === sectionId ? (isReviewed ? 1 : -1) : 0),
           })),
         })
       }
-      return { previous }
+
+      for (const [detailKey, detail] of detailQueries) {
+        if (!detail) continue
+        queryClient.setQueryData<MapSectionDetail>(detailKey, {
+          ...detail,
+          reviewed_count: detail.files.some((f) => f.id === fileId)
+            ? detail.reviewed_count + (isReviewed ? 1 : -1)
+            : detail.reviewed_count,
+          files: detail.files.map((f) =>
+            f.id === fileId
+              ? { ...f, is_reviewed: isReviewed, reviewed_at: isReviewed ? new Date().toISOString() : null }
+              : f,
+          ),
+        })
+      }
+
+      return { previous, detailQueries }
     },
     onError: (_err, _vars, context) => {
       if (context?.previous) {
         queryClient.setQueryData(queryKey, context.previous)
       }
+      if (context?.detailQueries) {
+        for (const [detailKey, detail] of context.detailQueries) {
+          queryClient.setQueryData(detailKey, detail)
+        }
+      }
     },
     onSettled: () => {
       queryClient.invalidateQueries({ queryKey })
+      queryClient.invalidateQueries({
+        queryKey: ['sessions', sessionId, 'runs', runNumber, 'sections'],
+      })
     },
   })
 }
@@ -92,6 +152,9 @@ export function useClearMapProgress(sessionId: string, runNumber: number) {
     onSuccess: () => {
       queryClient.invalidateQueries({
         queryKey: ['sessions', sessionId, 'runs', runNumber],
+      })
+      queryClient.invalidateQueries({
+        queryKey: ['sessions', sessionId, 'runs', runNumber, 'sections'],
       })
     },
   })

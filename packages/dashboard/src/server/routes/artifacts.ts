@@ -16,6 +16,9 @@ const VALID_ARTIFACT_TYPES = new Set([
   'flow-analysis',
   'topology',
   'requirements-mapping',
+  'graph-context',
+  'graph-review-analysis',
+  'usage',
 ])
 
 export function createArtifactsRouter(db: Database): Router {

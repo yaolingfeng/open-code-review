@@ -9,6 +9,7 @@ Context discovery builds a comprehensive review context by:
 2. Pulling OpenSpec context and specs (if enabled)
 3. Discovering referenced files (AGENTS.md, CLAUDE.md, etc.)
 4. Merging everything with attribution
+5. Generating graph context after changed files are known (best-effort), with changed-symbol enrichment when diff ranges are available
 
 ## Discovery Sources (Priority Order)
 
@@ -150,6 +151,24 @@ Save discovered context to session directory (see `references/session-files.md` 
 ```
 .ocr/sessions/{YYYY-MM-DD}-{branch}/discovered-standards.md
 ```
+
+When changed files are known, also generate graph context:
+
+```bash
+CHANGED_FILES=$(git diff --cached --name-only | paste -sd, -)
+ocr graph context \
+  --workflow review \
+  --files "$CHANGED_FILES" \
+  --session-dir "$SESSION_DIR" \
+  --json >/tmp/ocr-graph-context.json
+```
+
+This creates `graph-context.md` and `graph-context.json`.
+
+- `changedFiles` remains the canonical git-derived workflow input.
+- When git diff hunks are available, graph context also records `changedRanges` and narrows `changedNodes` to overlapping changed symbols.
+- If diff ranges are unavailable or do not overlap any graph symbol, graph context falls back to file-level changed nodes and records a warning.
+- Missing graph DB, stale parser version, parse failures, and unsupported files must not block review/map workflows; record the warning and continue.
 
 ### Example Output
 

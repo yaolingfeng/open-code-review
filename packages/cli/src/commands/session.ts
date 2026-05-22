@@ -25,6 +25,7 @@ import {
   ensureDatabase,
   saveDatabase,
   bumpAgentSessionHeartbeat,
+  bumpWorkflowCommandHeartbeat,
   getAgentSession,
   insertAgentSession,
   listAgentSessionsForWorkflow,
@@ -98,6 +99,13 @@ const startInstanceSubcommand = new Command("start-instance")
           (persona && instanceIndex !== null
             ? `${persona}-${instanceIndex}`
             : null);
+
+        // Keep the dashboard-spawned orchestrator row alive before sweeping.
+        // Starting a reviewer often happens after a long Tech Lead step; if
+        // the parent workflow row is just over the heartbeat threshold, the
+        // sweep below can otherwise orphan and terminate the still-running
+        // orchestrator before the reviewer is spawned.
+        bumpWorkflowCommandHeartbeat(db, workflowId);
 
         // Sweep stale rows opportunistically — the spec mandates a sweep on
         // every new agent-session creation, in addition to dashboard startup.

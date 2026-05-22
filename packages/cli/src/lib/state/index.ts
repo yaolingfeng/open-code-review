@@ -21,10 +21,14 @@ import {
   getSession,
   getLatestActiveSession,
   getAllSessions,
+  resetSessionForFreshStart,
   insertEvent,
   getEventsForSession,
+  exportTokenUsageArtifacts,
+  bumpWorkflowCommandHeartbeat,
+  completeWorkflowCommandExecutions,
 } from "../db/index.js";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import type {
   InitParams,
   TransitionParams,
@@ -66,6 +70,19 @@ export type {
 
 // ── Helpers ──
 
+function exportUsageArtifactsBestEffort(
+  db: Database,
+  sessionId: string,
+  sessionDir: string,
+): void {
+  try {
+    exportTokenUsageArtifacts(db, sessionId, sessionDir);
+  } catch {
+    // Token usage is observability data. Review/map completion must not fail
+    // because a vendor omitted usage or an artifact write races with cleanup.
+  }
+}
+
 /** Returns true if the directory contains at least one .md or .json file (recursively). */
 function hasArtifacts(dir: string): boolean {
   try {
@@ -90,13 +107,43 @@ function hasArtifacts(dir: string): boolean {
  * UNIQUE constraint.
  */
 export async function stateInit(params: InitParams): Promise<string> {
-  const { sessionId, branch, workflowType, sessionDir, ocrDir } = params;
+  const {
+    sessionId,
+    branch,
+    workflowType,
+    sessionDir,
+    ocrDir,
+    fresh = false,
+    preserveCommandUid,
+  } = params;
   const db = await ensureDatabase(ocrDir);
   const dbPath = join(ocrDir, "data", "ocr.db");
 
   const existing = getSession(db, sessionId);
 
   if (existing) {
+    if (fresh) {
+      resetSessionForFreshStart(db, sessionId, {
+        branch,
+        workflow_type: workflowType,
+        session_dir: sessionDir,
+        preserve_command_uid: preserveCommandUid,
+      });
+
+      insertEvent(db, {
+        session_id: sessionId,
+        event_type: "session_reset",
+        phase: "context",
+        phase_number: 1,
+        round: 1,
+        metadata: JSON.stringify({ source: "fresh" }),
+      });
+
+      bumpWorkflowCommandHeartbeat(db, sessionId);
+      saveDatabase(db, dbPath);
+      return sessionId;
+    }
+
     // Session exists — determine the correct round from filesystem
     const roundsDir = join(sessionDir, "rounds");
     let nextRound = 1;
@@ -159,6 +206,7 @@ export async function stateInit(params: InitParams): Promise<string> {
     round: 1,
   });
 
+  bumpWorkflowCommandHeartbeat(db, sessionId);
   saveDatabase(db, dbPath);
 
   return sessionId;
@@ -205,6 +253,12 @@ export async function stateTransition(params: TransitionParams): Promise<void> {
     });
   }
 
+  bumpWorkflowCommandHeartbeat(db, sessionId);
+
+  if (phase === "complete") {
+    exportUsageArtifactsBestEffort(db, sessionId, existing.session_dir);
+  }
+
   saveDatabase(db, dbPath);
 }
 
@@ -233,6 +287,9 @@ export async function stateClose(params: CloseParams): Promise<void> {
     phase_number: existing.phase_number,
     round: existing.current_round,
   });
+
+  completeWorkflowCommandExecutions(db, sessionId);
+  exportUsageArtifactsBestEffort(db, sessionId, existing.session_dir);
 
   saveDatabase(db, dbPath);
 }

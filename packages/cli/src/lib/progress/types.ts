@@ -2,6 +2,8 @@
  * Progress tracking types - shared across workflow strategies
  */
 
+import type { WorkflowType, SessionStatus } from "../state/types.js";
+
 export type { WorkflowType, SessionStatus } from "../state/types.js";
 
 export type PhaseStatus = "pending" | "in_progress" | "complete";

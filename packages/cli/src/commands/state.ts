@@ -120,6 +120,10 @@ const initSubcommand = new Command("init")
   )
   .option("--session-dir <dir>", "Session directory path (auto-resolved if omitted)")
   .option(
+    "--fresh",
+    "Reset existing SQLite rows for this session id before starting from phase 1",
+  )
+  .option(
     "--dashboard-uid <uid>",
     "Dashboard command_executions uid to link this workflow to. Takes precedence over the OCR_DASHBOARD_EXECUTION_UID env var so AI shells that strip env vars can still wire the linkage.",
   )
@@ -129,6 +133,7 @@ const initSubcommand = new Command("init")
       branch: string;
       workflowType: WorkflowType;
       sessionDir?: string;
+      fresh?: boolean;
       dashboardUid?: string;
     }) => {
       const targetDir = process.cwd();
@@ -143,12 +148,23 @@ const initSubcommand = new Command("init")
       }
 
       try {
+        // Resolve dashboard linkage before `stateInit` so a fresh reset can
+        // preserve the current dashboard parent row if the capture service
+        // already auto-linked it to this deterministic session id.
+        const markerUid = readDashboardSpawnMarker(ocrDir)?.execution_uid;
+        const dashboardUid =
+          options.dashboardUid ??
+          process.env["OCR_DASHBOARD_EXECUTION_UID"] ??
+          markerUid;
+
         const sessionId = await stateInit({
           sessionId: options.sessionId,
           branch: options.branch,
           workflowType: options.workflowType,
           sessionDir,
           ocrDir,
+          fresh: options.fresh,
+          preserveCommandUid: dashboardUid,
         });
 
         // Late-link the dashboard's parent command_execution row to this
@@ -173,11 +189,6 @@ const initSubcommand = new Command("init")
         //      spawn time. This is the durable, guaranteed path: it
         //      doesn't depend on env-var inheritance or prompt-following.
         //      Used as the fallback when (1) and (2) miss.
-        const markerUid = readDashboardSpawnMarker(ocrDir)?.execution_uid;
-        const dashboardUid =
-          options.dashboardUid ??
-          process.env["OCR_DASHBOARD_EXECUTION_UID"] ??
-          markerUid;
         if (dashboardUid) {
           try {
             // Linkage flows through the single-owner CLI db helper

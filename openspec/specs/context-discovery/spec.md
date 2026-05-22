@@ -124,19 +124,23 @@ The system SHALL work without any context files, using default best practices.
 
 ### Requirement: Command-Agnostic Discovery
 
-The context discovery workflow SHALL be shared identically by all OCR commands that require project context, including `/ocr:review` and `/ocr:map`.
+The context discovery workflow SHALL be shared by OCR commands that require project context, including `/ocr:review` and `/ocr:map`. When graph context is enabled, context discovery SHALL run graph context generation after standard project context discovery.
 
-#### Scenario: Map command uses same discovery
-- **GIVEN** user invokes `/ocr:map`
-- **WHEN** context discovery phase executes
-- **THEN** the system SHALL use the identical discovery algorithm as `/ocr:review`
+#### Scenario: Review command generates graph context
 
-#### Scenario: Shared session context
-- **GIVEN** a session has `discovered-standards.md` from a prior command
-- **WHEN** another command runs in the same session
-- **THEN** the system SHALL reuse the existing discovered context without re-discovery
+- **GIVEN** `/ocr:review` is initiated
+- **AND** graph context is enabled
+- **WHEN** standard project context discovery completes
+- **THEN** the workflow SHALL attempt a best-effort graph incremental update before generating `graph-context.md` and `graph-context.json`
+- **AND** graph update or graph context failure SHALL NOT stop review
 
----
+#### Scenario: Map command generates graph context
+
+- **GIVEN** `/ocr:map` is initiated
+- **AND** graph context is enabled
+- **WHEN** standard project context discovery completes
+- **THEN** the workflow SHALL attempt a best-effort graph incremental update before generating `graph-context.md` and `graph-context.json`
+- **AND** graph update or graph context failure SHALL NOT stop map generation
 
 ### Requirement: Exhaustive Discovery Depth
 

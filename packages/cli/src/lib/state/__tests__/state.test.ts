@@ -3,7 +3,7 @@ import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import { writeFileSync } from "node:fs";
-import { closeAllDatabases } from "../../db/index.js";
+import { closeAllDatabases, getDb, recordTokenUsage } from "../../db/index.js";
 import {
   stateInit,
   stateTransition,
@@ -38,6 +38,16 @@ function sessionDir(sessionId: string): string {
   const dir = join(sessionsDir, sessionId);
   mkdirSync(dir, { recursive: true });
   return dir;
+}
+
+function countRows(
+  db: Awaited<ReturnType<typeof getDb>>,
+  table: string,
+  where: string,
+  params: unknown[],
+): number {
+  const result = db.exec(`SELECT COUNT(*) AS count FROM ${table} WHERE ${where}`, params);
+  return Number(result[0]?.values[0]?.[0] ?? 0);
 }
 
 describe("stateInit", () => {
@@ -91,6 +101,97 @@ describe("stateInit", () => {
     expect(result?.events[0]?.event_type).toBe("session_created");
   });
 
+  it("resets derived SQLite rows when an existing session is initialized with fresh", async () => {
+    const dir = sessionDir("fresh-reset-test");
+    await stateInit({
+      sessionId: "fresh-reset-test",
+      branch: "feat/old",
+      workflowType: "review",
+      sessionDir: dir,
+      ocrDir,
+    });
+
+    const db = await getDb(ocrDir);
+    db.run(
+      `INSERT INTO review_rounds
+         (session_id, round_number, verdict, final_md_path, parsed_at)
+       VALUES (?, 1, 'REQUEST CHANGES', 'old-final.md', datetime('now'))`,
+      ["fresh-reset-test"],
+    );
+    db.run(
+      `INSERT INTO map_runs (session_id, run_number, file_count, parsed_at)
+       VALUES (?, 1, 3, datetime('now'))`,
+      ["fresh-reset-test"],
+    );
+    db.run(
+      `INSERT INTO markdown_artifacts
+         (session_id, artifact_type, round_number, file_path, content)
+       VALUES (?, 'final', 1, 'old-final.md', 'old')`,
+      ["fresh-reset-test"],
+    );
+    db.run(
+      `INSERT INTO chat_conversations
+         (id, session_id, target_type, target_id)
+       VALUES ('old-chat', ?, 'review_round', 1)`,
+      ["fresh-reset-test"],
+    );
+    db.run(
+      `INSERT INTO user_notes (target_type, target_id, content)
+       VALUES ('session', ?, 'old note')`,
+      ["fresh-reset-test"],
+    );
+    db.run(
+      `INSERT INTO command_executions
+         (uid, command, args, workflow_id, vendor, last_heartbeat_at)
+       VALUES ('old-agent', 'old review', NULL, ?, 'claude', datetime('now'))`,
+      ["fresh-reset-test"],
+    );
+    db.run(
+      `INSERT INTO command_executions
+         (uid, command, args, workflow_id, vendor, last_heartbeat_at)
+       VALUES ('current-dashboard', 'current review', NULL, ?, 'claude', datetime('now', '-300 seconds'))`,
+      ["fresh-reset-test"],
+    );
+    recordTokenUsage(db, {
+      workflow_id: "fresh-reset-test",
+      vendor: "claude",
+      total_tokens: 42,
+    });
+
+    await stateInit({
+      sessionId: "fresh-reset-test",
+      branch: "feat/new",
+      workflowType: "review",
+      sessionDir: dir,
+      ocrDir,
+      fresh: true,
+      preserveCommandUid: "current-dashboard",
+    });
+
+    const result = await stateShow(ocrDir, "fresh-reset-test");
+    expect(result?.session.branch).toBe("feat/new");
+    expect(result?.session.status).toBe("active");
+    expect(result?.session.current_phase).toBe("context");
+    expect(result?.session.current_round).toBe(1);
+    expect(result?.events).toHaveLength(1);
+    expect(result?.events[0]?.event_type).toBe("session_reset");
+
+    expect(countRows(db, "review_rounds", "session_id = ?", ["fresh-reset-test"])).toBe(0);
+    expect(countRows(db, "map_runs", "session_id = ?", ["fresh-reset-test"])).toBe(0);
+    expect(countRows(db, "markdown_artifacts", "session_id = ?", ["fresh-reset-test"])).toBe(0);
+    expect(countRows(db, "chat_conversations", "session_id = ?", ["fresh-reset-test"])).toBe(0);
+    expect(countRows(db, "user_notes", "target_type = 'session' AND target_id = ?", ["fresh-reset-test"])).toBe(0);
+    expect(countRows(db, "agent_token_usage", "workflow_id = ?", ["fresh-reset-test"])).toBe(0);
+    expect(countRows(db, "command_executions", "uid = 'old-agent'", [])).toBe(0);
+
+    const preserved = db.exec(
+      `SELECT workflow_id, finished_at, exit_code
+         FROM command_executions
+        WHERE uid = 'current-dashboard'`,
+    );
+    expect(preserved[0]?.values).toEqual([["fresh-reset-test", null, null]]);
+  });
+
   it("creates the database file", async () => {
     const dir = sessionDir("db-create");
     await stateInit({
@@ -142,6 +243,52 @@ describe("stateTransition", () => {
     expect(result?.session.phase_number).toBe(2);
   });
 
+  it("does not generate graph artifacts as part of phase transition", async () => {
+    const dir = sessionDir("graph-review-transition");
+    await stateInit({
+      sessionId: "graph-review-transition",
+      branch: "feat/graph-review",
+      workflowType: "review",
+      sessionDir: dir,
+      ocrDir,
+    });
+
+    await stateTransition({
+      sessionId: "graph-review-transition",
+      phase: "change-context",
+      phaseNumber: 2,
+      ocrDir,
+    });
+
+    const graphContextPath = join(dir, "graph-context.json");
+    const graphReviewAnalysisPath = join(dir, "graph-review-analysis.json");
+    expect(existsSync(join(dir, "graph-context.md"))).toBe(false);
+    expect(existsSync(graphContextPath)).toBe(false);
+    expect(existsSync(graphReviewAnalysisPath)).toBe(false);
+  });
+
+  it("does not generate map graph artifacts as part of phase transition", async () => {
+    const dir = sessionDir("graph-map-transition");
+    await stateInit({
+      sessionId: "graph-map-transition",
+      branch: "feat/graph-map",
+      workflowType: "map",
+      sessionDir: dir,
+      ocrDir,
+    });
+
+    await stateTransition({
+      sessionId: "graph-map-transition",
+      phase: "map-context",
+      phaseNumber: 1,
+      ocrDir,
+    });
+
+    const graphContextPath = join(dir, "graph-context.json");
+    expect(existsSync(join(dir, "graph-context.md"))).toBe(false);
+    expect(existsSync(graphContextPath)).toBe(false);
+  });
+
   it("inserts a phase_transition event", async () => {
     const dir = sessionDir("phase-event");
     await stateInit({
@@ -161,14 +308,11 @@ describe("stateTransition", () => {
 
     const result = await stateShow(ocrDir, "phase-event");
     const events = result?.events ?? [];
-    const transitionEvent = events.find(
-      (e) => e.event_type === "phase_transition",
-    );
-    expect(transitionEvent).toBeDefined();
-    expect(transitionEvent?.phase).toBe("analysis");
-    expect(transitionEvent?.phase_number).toBe(3);
+    expect(events).toHaveLength(2);
+    expect(events[1]?.event_type).toBe("phase_transition");
+    expect(events[1]?.phase).toBe("analysis");
+    expect(events[1]?.phase_number).toBe(3);
   });
-
   it("inserts a round_started event when round changes", async () => {
     const dir = sessionDir("round-change");
     await stateInit({
@@ -237,6 +381,36 @@ describe("stateTransition", () => {
         ocrDir,
       }),
     ).rejects.toThrow("Session not found: nonexistent");
+  });
+
+  it("exports usage artifacts when transitioning a map session to complete", async () => {
+    const dir = sessionDir("map-usage");
+    await stateInit({
+      sessionId: "map-usage",
+      branch: "feat/map-usage",
+      workflowType: "map",
+      sessionDir: dir,
+      ocrDir,
+    });
+    const db = await getDb(ocrDir);
+    recordTokenUsage(db, {
+      workflow_id: "map-usage",
+      vendor: "opencode",
+      input_tokens: 8,
+      output_tokens: 4,
+    });
+
+    await stateTransition({
+      sessionId: "map-usage",
+      phase: "complete",
+      phaseNumber: 6,
+      mapRun: 1,
+      ocrDir,
+    });
+
+    expect(existsSync(join(dir, "usage.md"))).toBe(true);
+    expect(existsSync(join(dir, "usage.json"))).toBe(true);
+    expect(readFileSync(join(dir, "usage.md"), "utf-8")).toContain("Total tokens: 12");
   });
 
   it("supports multiple sequential transitions", async () => {
@@ -316,6 +490,70 @@ describe("stateClose", () => {
     const closeEvent = events.find((e) => e.event_type === "session_closed");
     expect(closeEvent).toBeDefined();
     expect(closeEvent?.phase).toBe("complete");
+  });
+
+  it("exports usage artifacts when closing a review session", async () => {
+    const dir = sessionDir("close-usage");
+    await stateInit({
+      sessionId: "close-usage",
+      branch: "feat/usage",
+      workflowType: "review",
+      sessionDir: dir,
+      ocrDir,
+    });
+    const db = await getDb(ocrDir);
+    recordTokenUsage(db, {
+      workflow_id: "close-usage",
+      vendor: "claude",
+      input_tokens: 10,
+      output_tokens: 5,
+    });
+
+    await stateClose({
+      sessionId: "close-usage",
+      ocrDir,
+    });
+
+    expect(existsSync(join(dir, "usage.md"))).toBe(true);
+    expect(existsSync(join(dir, "usage.json"))).toBe(true);
+    expect(readFileSync(join(dir, "usage.md"), "utf-8")).toContain("Total tokens: 15");
+  });
+
+  it("marks dashboard workflow commands complete when closing a session", async () => {
+    const dir = sessionDir("close-command");
+    await stateInit({
+      sessionId: "close-command",
+      branch: "feat/close-command",
+      workflowType: "review",
+      sessionDir: dir,
+      ocrDir,
+    });
+    const db = await getDb(ocrDir);
+    db.run(
+      `INSERT INTO command_executions
+         (uid, command, args, workflow_id, vendor, last_heartbeat_at)
+       VALUES ('dashboard-close-command', 'ocr review master', NULL, ?, 'claude', datetime('now'))`,
+      ["close-command"],
+    );
+    db.run(
+      `INSERT INTO command_executions
+         (uid, command, args, workflow_id, vendor, last_heartbeat_at)
+       VALUES ('reviewer-close-command', 'session-instance:backend-1', NULL, ?, 'claude', datetime('now'))`,
+      ["close-command"],
+    );
+
+    await stateClose({ sessionId: "close-command", ocrDir });
+
+    const rows = db.exec(
+      `SELECT uid, finished_at, exit_code
+         FROM command_executions
+        WHERE uid IN ('dashboard-close-command', 'reviewer-close-command')
+        ORDER BY uid`,
+    )[0]?.values;
+    expect(rows?.[0]?.[0]).toBe("dashboard-close-command");
+    expect(rows?.[0]?.[1]).toBeTruthy();
+    expect(rows?.[0]?.[2]).toBe(0);
+    expect(rows?.[1]).toEqual(["reviewer-close-command", null, null]);
   });
 
   it("throws if session does not exist", async () => {

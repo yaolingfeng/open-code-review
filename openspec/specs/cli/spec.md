@@ -933,3 +933,68 @@ The CLI's `ocr review` command SHALL accept a `--resume <workflow-session-id>` f
 - **THEN** the system SHALL print a clear message that no resume token is available
 - **AND** SHALL exit with a non-zero status without spawning the host CLI
 
+### Requirement: Graph Commands
+
+CLI SHALL provide `ocr graph status`, `ocr graph build`, `ocr graph update`, `ocr graph query`, `ocr graph impact`, and `ocr graph context` commands.
+
+#### Scenario: Show graph status
+
+- **WHEN** user runs `ocr graph status --json`
+- **THEN** CLI SHALL report graph database status, file count, node count, edge count, supported language count, unsupported file count, and warnings
+
+#### Scenario: Build graph
+
+- **WHEN** user runs `ocr graph build --full`
+- **THEN** CLI SHALL perform a full graph rebuild using the internal graph engine
+
+#### Scenario: Update graph
+
+- **WHEN** user runs `ocr graph update --base origin/main`
+- **THEN** CLI SHALL update graph data for changed files only
+
+#### Scenario: Query graph
+
+- **WHEN** user runs `ocr graph query file_summary --target src/foo.ts --json`
+- **THEN** CLI SHALL return structured JSON query results
+
+#### Scenario: Generate context
+
+- **WHEN** user runs `ocr graph context --workflow review --json`
+- **THEN** CLI SHALL generate a review graph context payload
+
+#### Scenario: Missing graph
+
+- **GIVEN** `.ocr/data/graph.db` does not exist
+- **WHEN** user runs a read-only graph command
+- **THEN** CLI SHALL return a clear missing graph status instead of throwing an unhandled error
+
+### Requirement: Usage CLI
+
+系统 SHALL 提供 `ocr usage` 命令，用于记录和查看 workflow token 用量。
+
+#### Scenario: Record workflow usage
+
+- **GIVEN** 用户执行 `ocr usage record --workflow <id> --vendor claude --input-tokens 100 --output-tokens 50`
+- **WHEN** 命令成功
+- **THEN** 系统 SHALL 写入一条 `agent_token_usage`
+- **AND** 如果未提供 `--total-tokens`，系统 SHALL 使用已提供 token 细分计算 total
+
+#### Scenario: Record agent usage
+
+- **GIVEN** 用户执行 `ocr usage record --agent-session <id> --input-tokens 100`
+- **WHEN** `<id>` 对应 `command_executions.uid`
+- **THEN** 系统 SHALL 从该 execution 继承 workflow、vendor 和 model 信息
+
+#### Scenario: Show usage
+
+- **GIVEN** workflow 已有 token usage
+- **WHEN** 用户执行 `ocr usage show --workflow <id> --json`
+- **THEN** 输出 SHALL 包含 `summary` 和 `rows`
+
+#### Scenario: Export usage artifacts
+
+- **GIVEN** workflow 已存在于 session state
+- **WHEN** 用户执行 `ocr usage export --workflow <id>`
+- **THEN** 系统 SHALL 在 session root 写入 `usage.md`
+- **AND** 系统 SHALL 在 session root 写入 `usage.json`
+

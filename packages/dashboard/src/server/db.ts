@@ -236,6 +236,9 @@ let cachedDbPath: string | null = null
 
 let preSaveHook: (() => void) | null = null
 let postSaveHook: (() => void) | null = null
+/** Set to true during shutdown — prevents preSaveHook from triggering syncFromDisk
+ *  which can create a feedback loop (saveDb → syncFromDisk → onSync → saveDb → …). */
+let shuttingDown = false
 
 /**
  * Register hooks that run around every saveDb() call.
@@ -249,6 +252,12 @@ export function registerSaveHooks(
 ): void {
   preSaveHook = preSave
   postSaveHook = postSave
+}
+
+/** Mark the process as shutting down. Subsequent saveDb() calls skip preSaveHook
+ *  to prevent feedback loops during cleanup. */
+export function markShuttingDown(): void {
+  shuttingDown = true
 }
 
 /**
@@ -303,7 +312,10 @@ export async function openDb(ocrDir: string): Promise<Database> {
  * by concurrent processes.
  */
 export function saveDb(db: Database, ocrDir: string): void {
-  preSaveHook?.()
+  // Skip preSaveHook during shutdown — it calls syncFromDisk() which can
+  // trigger a feedback loop (syncFromDisk → onSync → saveDb → …) that
+  // starves the event loop and prevents SIGINT handlers from executing.
+  if (!shuttingDown) preSaveHook?.()
   const dbPath = join(ocrDir, 'data', 'ocr.db')
   const data = db.export()
   const dir = dirname(dbPath)

@@ -3,7 +3,7 @@ import { useQuery } from '@tanstack/react-query'
 import { GitBranch } from 'lucide-react'
 import { useTheme } from '../../../providers/theme-provider'
 import { fetchApi } from '../../../lib/utils'
-import type { MapSection, SectionDependency } from '../../../lib/api-types'
+import type { MapSectionSummary, SectionDependency } from '../../../lib/api-types'
 
 const MermaidRenderer = lazy(() => import('./mermaid-renderer'))
 
@@ -14,7 +14,7 @@ type GraphResponse = {
 type DependencyGraphProps = {
   sessionId: string
   runNumber: number
-  sections: MapSection[]
+  sections: MapSectionSummary[]
   onSectionClick?: (sectionId: number) => void
 }
 
@@ -35,6 +35,16 @@ export function DependencyGraph({ sessionId, runNumber, sections, onSectionClick
     retry: false,
   })
 
+  const sectionIdsByNodeId = useMemo(() => {
+    const pairs: Array<[string, number]> = []
+
+    for (const section of sections) {
+      pairs.push([getNodeId(section.id), section.id])
+    }
+
+    return new Map(pairs)
+  }, [sections])
+
   const graphDefinition = useMemo(() => {
     if (!data?.dependencies) return null
     return buildMermaidGraph(data.dependencies, sections, theme)
@@ -42,14 +52,12 @@ export function DependencyGraph({ sessionId, runNumber, sections, onSectionClick
 
   const handleNodeClick = useCallback(
     (nodeId: string) => {
-      const matched = sections.find(
-        (s) => sanitizeId(s.title) === nodeId,
-      )
-      if (matched && onSectionClick) {
-        onSectionClick(matched.id)
+      const sectionId = sectionIdsByNodeId.get(nodeId)
+      if (sectionId && onSectionClick) {
+        onSectionClick(sectionId)
       }
     },
-    [sections, onSectionClick],
+    [sectionIdsByNodeId, onSectionClick],
   )
 
   if (isLoading) return null
@@ -82,7 +90,7 @@ export function DependencyGraph({ sessionId, runNumber, sections, onSectionClick
 
 function buildMermaidGraph(
   dependencies: SectionDependency[],
-  sections: MapSection[],
+  sections: MapSectionSummary[],
   theme: string,
 ): string | null {
   if (sections.length === 0) return null
@@ -92,7 +100,7 @@ function buildMermaidGraph(
 
   // Add nodes for each section
   for (const section of sections) {
-    const id = sanitizeId(section.title)
+    const id = getNodeId(section.id)
     const reviewed = section.reviewed_count
     const total = section.file_count
     const label = `${section.title}<br/>${reviewed}/${total} files`
@@ -101,8 +109,12 @@ function buildMermaidGraph(
 
   // Add edges with relationship labels
   for (const dep of dependencies) {
-    const fromId = sanitizeId(dep.fromTitle)
-    const toId = sanitizeId(dep.toTitle)
+    if (dep.fromSectionId == null || dep.toSectionId == null) {
+      continue
+    }
+
+    const fromId = getNodeId(dep.fromSectionId)
+    const toId = getNodeId(dep.toSectionId)
     // Escape quotes in relationship text for Mermaid
     const rel = dep.relationship.replace(/"/g, "'")
     lines.push(`  ${fromId} -->|"${rel}"| ${toId}`)
@@ -123,7 +135,7 @@ function buildMermaidGraph(
 
   // Assign classes based on progress
   for (const section of sections) {
-    const id = sanitizeId(section.title)
+    const id = getNodeId(section.id)
     const pct = section.file_count > 0 ? section.reviewed_count / section.file_count : 0
     if (pct >= 1) {
       lines.push(`  class ${id} complete`)
@@ -137,6 +149,6 @@ function buildMermaidGraph(
   return lines.join('\n')
 }
 
-function sanitizeId(str: string): string {
-  return str.replace(/[^a-zA-Z0-9]/g, '_').replace(/_+/g, '_').replace(/^_|_$/g, '')
+function getNodeId(sectionId: number): string {
+  return `section_${sectionId}`
 }

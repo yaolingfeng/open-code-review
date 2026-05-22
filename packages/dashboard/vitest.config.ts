@@ -13,11 +13,12 @@ export default defineConfig({
         __dirname,
         '../cli/src/lib/vendor-resume.ts',
       ),
+      '@open-code-review/graph': resolve(__dirname, '../shared/graph/src/index.ts'),
       '@open-code-review/platform': resolve(__dirname, '../shared/platform/src/index.ts'),
     },
   },
   test: {
-    include: ['src/**/__tests__/**/*.test.ts'],
+    include: ['src/**/__tests__/**/*.test.ts', 'src/**/__tests__/**/*.test.tsx'],
     environment: 'node',
     coverage: {
       provider: 'v8',

@@ -211,6 +211,83 @@ export function bumpAgentSessionHeartbeat(db: Database, id: string): void {
 }
 
 /**
+ * Keeps the dashboard-spawned workflow command alive when the AI is making
+ * progress through `ocr state transition` events but the vendor CLI stream is
+ * quiet. Without this workflow-level heartbeat, long Tech Lead phases can be
+ * incorrectly swept as orphaned even though orchestration state is advancing.
+ */
+export function bumpWorkflowCommandHeartbeat(
+  db: Database,
+  workflowId: string,
+): void {
+  db.run(
+    `UPDATE command_executions
+        SET last_heartbeat_at = datetime('now')
+      WHERE workflow_id = ?
+        AND finished_at IS NULL
+        AND last_heartbeat_at IS NOT NULL
+        AND command NOT LIKE 'session-instance%'`,
+    [workflowId],
+  );
+}
+
+/**
+ * Marks dashboard-spawned workflow commands as successful when the workflow
+ * closes from inside the AI process. This covers the case where `ocr state
+ * close` reaches `Review complete` but the host AI CLI keeps its process alive,
+ * leaving the dashboard button and Commands tab stuck in "running".
+ */
+export function completeWorkflowCommandExecutions(
+  db: Database,
+  workflowId: string,
+): void {
+  db.run(
+    `UPDATE command_executions
+        SET exit_code = COALESCE(exit_code, 0),
+            finished_at = COALESCE(finished_at, datetime('now')),
+            notes = CASE
+              WHEN notes IS NULL OR notes = '' THEN 'completed by workflow close'
+              WHEN instr(notes, 'completed by workflow close') = 0
+                THEN notes || char(10) || 'completed by workflow close'
+              ELSE notes
+            END
+      WHERE workflow_id = ?
+        AND finished_at IS NULL
+        AND last_heartbeat_at IS NOT NULL
+        AND command NOT LIKE 'session-instance%'`,
+    [workflowId],
+  );
+}
+
+function staleAgentSessionPredicate(alias: string): string {
+  return `
+      ${alias}.finished_at IS NULL
+      AND ${alias}.last_heartbeat_at IS NOT NULL
+      AND (julianday('now') - julianday(${alias}.last_heartbeat_at)) * 86400 > ?
+      AND NOT (
+        ${alias}.workflow_id IS NOT NULL
+        AND ${alias}.command NOT LIKE 'session-instance%'
+        AND (
+          EXISTS (
+            SELECT 1
+              FROM orchestration_events e
+             WHERE e.session_id = ${alias}.workflow_id
+               AND (julianday('now') - julianday(e.created_at)) * 86400 <= ?
+          )
+          OR EXISTS (
+            SELECT 1
+              FROM command_executions c2
+             WHERE c2.workflow_id = ${alias}.workflow_id
+               AND c2.id <> ${alias}.id
+               AND c2.finished_at IS NULL
+               AND c2.last_heartbeat_at IS NOT NULL
+               AND (julianday('now') - julianday(c2.last_heartbeat_at)) * 86400 <= ?
+          )
+        )
+      )`;
+}
+
+/**
  * Sets `vendor_session_id` once per row. Re-binding to a different value
  * is rejected — the AI is expected to call this exactly once per agent
  * session.
@@ -456,14 +533,17 @@ export function sweepStaleAgentSessions(
   db: Database,
   thresholdSeconds: number,
 ): SweepResult {
+  const stalePredicate = staleAgentSessionPredicate("c");
   const staleSql = `
-    SELECT uid, id FROM command_executions
-    WHERE finished_at IS NULL
-      AND last_heartbeat_at IS NOT NULL
-      AND (julianday('now') - julianday(last_heartbeat_at)) * 86400 > ?
+    SELECT c.uid, c.id FROM command_executions c
+    WHERE ${stalePredicate}
   `;
   const stale = resultToRows<{ uid: string | null; id: number }>(
-    db.exec(staleSql, [thresholdSeconds]),
+    db.exec(staleSql, [
+      thresholdSeconds,
+      thresholdSeconds,
+      thresholdSeconds,
+    ]),
   );
 
   if (stale.length === 0) {
@@ -473,14 +553,18 @@ export function sweepStaleAgentSessions(
   const note = `${NOTE_ORPHAN_PREFIX} (threshold ${thresholdSeconds}s)`;
 
   db.run(
-    `UPDATE command_executions
+    `UPDATE command_executions AS c
        SET finished_at = datetime('now'),
            exit_code = ?,
            notes = COALESCE(notes || char(10), '') || ?
-     WHERE finished_at IS NULL
-       AND last_heartbeat_at IS NOT NULL
-       AND (julianday('now') - julianday(last_heartbeat_at)) * 86400 > ?`,
-    [ORPHAN_EXIT_CODE, note, thresholdSeconds],
+     WHERE ${stalePredicate}`,
+    [
+      ORPHAN_EXIT_CODE,
+      note,
+      thresholdSeconds,
+      thresholdSeconds,
+      thresholdSeconds,
+    ],
   );
 
   return {

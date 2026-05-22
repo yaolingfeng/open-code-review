@@ -5,6 +5,7 @@ export type { SessionStatus, WorkflowType, FindingTriage, FindingSeverity, ChatT
 export type SessionSummary = {
   id: string
   branch: string
+  session_dir: string
   status: SessionStatus
   workflow_type: WorkflowType
   current_phase: string
@@ -131,6 +132,52 @@ export type AgentSessionsResponse = {
   agent_sessions: AgentSessionRow[]
 }
 
+export type TokenUsageRow = {
+  id: number
+  workflow_id: string
+  agent_session_id: string | null
+  command_execution_id: number | null
+  vendor: string
+  vendor_session_id: string | null
+  model: string | null
+  phase: string | null
+  input_tokens: number
+  output_tokens: number
+  cache_read_tokens: number
+  cache_write_tokens: number
+  reasoning_tokens: number
+  total_tokens: number
+  cost_usd: number | null
+  source: 'manual' | 'vendor_event' | 'estimated'
+  raw_usage_json: string | null
+  recorded_at: string
+}
+
+export type TokenUsageSummary = {
+  workflow_id: string
+  input_tokens: number
+  output_tokens: number
+  cache_read_tokens: number
+  cache_write_tokens: number
+  reasoning_tokens: number
+  total_tokens: number
+  cost_usd: number | null
+  row_count: number
+  by_agent: Array<{
+    agent_session_id: string | null
+    name: string | null
+    persona: string | null
+    model: string | null
+    total_tokens: number
+    cost_usd: number | null
+  }>
+}
+
+export type TokenUsageResponse = {
+  summary: TokenUsageSummary
+  rows: TokenUsageRow[]
+}
+
 // ── Terminal handoff payload (Spec 5) ──
 
 // Mirror of server-side ResumeOutcome. Keep in sync with
@@ -148,6 +195,7 @@ export type AgentSessionsResponse = {
 // client bundle. Round-3 SF3: closes the previous client/server
 // drift risk by eliminating the hand-maintained mirror.
 export type { UnresumableReason } from '../../server/services/capture/unresumable-microcopy'
+import type { UnresumableReason } from '../../server/services/capture/unresumable-microcopy'
 
 export type CaptureDiagnostics = {
   vendor: string | null
@@ -226,16 +274,146 @@ export type Artifact = {
   parsed_at: string
 }
 
+export type GraphStatus = {
+  status: 'ready' | 'missing' | 'stale' | 'degraded' | 'building' | 'error'
+  dbPath: string
+  indexedFileCount: number
+  unsupportedFileCount: number
+  nodeCount: number
+  edgeCount: number
+  languages: string[]
+  lastIndexedAt?: string
+  warnings: string[]
+}
+
+export type GraphSearchMatchType = 'name' | 'qualified_name' | 'file_path' | 'kind' | 'signature'
+
+export type GraphSearchResultItem = {
+  entityType: 'node' | 'file'
+  qualifiedName: string
+  filePath: string
+  name: string
+  kind: string
+  language: string
+  matchTypes: GraphSearchMatchType[]
+  score?: number
+}
+
+export type GraphSearchResult = {
+  status: 'ready' | 'missing' | 'stale' | 'degraded' | 'error'
+  query: string
+  summary: string
+  limit: number
+  results: GraphSearchResultItem[]
+  warnings: string[]
+  truncated: boolean
+}
+
+export type GraphPriority = {
+  qualifiedName: string
+  filePath: string
+  reason: string
+  score: number
+}
+
+export type GraphReviewAnalysisHint = {
+  kind: 'review_order' | 'boundary_crossing' | 'coupling_hotspot' | 'weakly_connected_change' | 'test_gap'
+  severity: 'info' | 'warning' | 'high'
+  message: string
+  filePaths?: string[]
+  qualifiedNames?: string[]
+}
+
+export type GraphModuleSummary = {
+  name: string
+  changedFiles: string[]
+  impactedFiles: string[]
+  changedSymbolCount: number
+  impactedSymbolCount: number
+  crossModuleEdgeCount: number
+  bridgeFiles: string[]
+  bridgeQualifiedNames: string[]
+  summary: string
+}
+
+export type GraphNode = {
+  id: number
+  kind: 'File' | 'Class' | 'Function' | 'Type' | 'Test'
+  name: string
+  qualifiedName: string
+  filePath: string
+  lineStart: number
+  lineEnd: number
+  language: string
+  parentName?: string | null
+  isTest?: boolean
+  metadata?: Record<string, unknown>
+}
+
+export type GraphFlow = {
+  name: string
+  entryQualified: string
+  files: string[]
+  criticality: number
+}
+
+export type GraphTestGap = {
+  qualifiedName: string
+  filePath: string
+  lineStart: number
+  kind: 'no_test_edge_for_changed_function' | 'changed_flow_entry_without_test' | 'changed_testless_file'
+  severity: 'high' | 'medium' | 'low'
+  reason: string
+}
+
+export type GraphReviewAnalysis = {
+  status: 'ready' | 'missing' | 'stale' | 'degraded' | 'error'
+  summary: string
+  changedSymbols: GraphNode[]
+  priorities: GraphPriority[]
+  hints: GraphReviewAnalysisHint[]
+  modules: GraphModuleSummary[]
+  drilldown: {
+    impactedFiles: string[]
+    impactedNodes: GraphNode[]
+    flows: GraphFlow[]
+    testGaps: GraphTestGap[]
+    unsupportedChangedFiles: string[]
+  }
+  warnings: string[]
+  truncated: boolean
+  generatedAt: string
+  sourceScope: {
+    workflow: 'review' | 'map'
+    changedFileCount: number
+    changedSymbolPrecision: 'symbol' | 'file' | 'none'
+  }
+  performance?: {
+    phases: Array<{
+      phase: string
+      elapsedMs: number
+      nodeCount?: number
+      edgeCount?: number
+      downgradedReason?: string
+    }>
+    totalElapsedMs: number
+    nodeCount: number
+    edgeCount: number
+    truncationReason?: string
+    downgradedReason?: string
+  }
+}
+
 export type MapRun = {
   id: number
   session_id: string
   run_number: number
   map_md_path: string | null
   parsed_at: string | null
-  sections: MapSection[]
+  sections: MapSectionSummary[]
 }
 
-export type MapSection = {
+export type MapSectionSummary = {
   id: number
   map_run_id: number
   section_number: number
@@ -243,6 +421,9 @@ export type MapSection = {
   description: string | null
   file_count: number
   reviewed_count: number
+}
+
+export type MapSectionDetail = MapSectionSummary & {
   files: MapFile[]
 }
 
@@ -259,8 +440,10 @@ export type MapFile = {
 }
 
 export type SectionDependency = {
+  fromSectionId: number | null
   fromSection: number
   fromTitle: string
+  toSectionId: number | null
   toSection: number
   toTitle: string
   relationship: string
@@ -307,6 +490,17 @@ export type NormalizedStreamEvent =
   | { type: 'tool_result'; toolId: string; output: string; isError: boolean }
   | { type: 'error'; source: 'agent' | 'process'; message: string; detail?: string }
   | { type: 'session_id'; id: string }
+  | {
+      type: 'usage'
+      inputTokens?: number
+      outputTokens?: number
+      cacheReadTokens?: number
+      cacheWriteTokens?: number
+      reasoningTokens?: number
+      totalTokens?: number
+      costUsd?: number
+      raw?: Record<string, unknown>
+    }
 
 export type StreamEvent = NormalizedStreamEvent & {
   executionId: number

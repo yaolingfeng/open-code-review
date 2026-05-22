@@ -25,6 +25,14 @@ When spawning a reviewer task, provide the following context:
 
 {tech lead analysis including requirements assessment and focus points}
 
+## Graph Review Analysis (if present)
+
+{summary-first content of graph-review-analysis.json - summary, priorities, suggested review order, key hints, module or architecture summaries, warnings}
+
+## Graph Context (if present)
+
+{content of graph-context.md - changed symbols, changed ranges, impact radius, test gaps, unsupported changed files, warnings}
+
 ## Code to Review
 
 ```diff
@@ -44,9 +52,15 @@ You are NOT limited to the diff. You SHOULD:
 - Examine related tests
 - Check configuration and environment setup
 - Read documentation if relevant
+- Use `ocr graph query ...` for follow-up graph lookups when graph context is available
+- Use `ocr graph review-analysis --json ...` or session artifacts for deeper graph drilldown when graph review analysis is available
 - Use your professional judgment to decide what's relevant
 
 Your persona guides your focus area but does NOT restrict your exploration.
+
+Graph review analysis and graph context are advisory. You may use them to prioritize exploration, but every finding must be verified against source code, diff, tests, runtime behavior, or documented requirements before reporting it.
+Prefer starting from summary-first priorities, review order, and hints when graph review analysis is present.
+Prefer starting from changed symbols when they are present; use changed files as the completeness boundary and fallback scope.
 
 ### Output Format
 
@@ -141,6 +155,17 @@ This PR adds a new user profile API endpoint that returns user data.
 - Validate proper authentication on endpoint
 - Check what data is exposed in response
 - Verify input validation on user ID parameter
+
+## Graph Context
+
+Risk: medium (0.42)
+
+Impacted files:
+- `api/routes.ts`
+- `services/profile.ts`
+
+Test gaps:
+- `services/profile.ts::getProfile` has no TESTED_BY edge
 
 ## Code to Review
 

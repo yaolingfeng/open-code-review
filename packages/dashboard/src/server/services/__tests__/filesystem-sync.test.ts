@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest'
-import { mkdirSync, writeFileSync, rmSync } from 'node:fs'
+import { mkdirSync, writeFileSync, rmSync, utimesSync } from 'node:fs'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
 import { randomUUID } from 'node:crypto'
@@ -219,6 +219,61 @@ API updates.
       expect(artifacts[0]?.['content']).toBe('# Context\n\nSome context.')
     })
 
+    it('stores graph context as a session-level markdown artifact', async () => {
+      const sessionId = '2026-01-01-graph-artifact-test'
+      const sessionDir = join(sessionsDir, sessionId)
+      mkdirSync(sessionDir, { recursive: true })
+
+      writeFileSync(
+        join(sessionDir, 'graph-context.md'),
+        '# Graph Context\n\n- Risk Level: medium\n- Unsupported Changed Files: 1',
+      )
+
+      const sync = new FilesystemSync(db, sessionsDir)
+      await sync.fullScan()
+
+      const artifacts = queryAll(
+        db,
+        'SELECT * FROM markdown_artifacts WHERE session_id = ? AND artifact_type = ?',
+        [sessionId, 'graph-context'],
+      )
+      expect(artifacts).toHaveLength(1)
+      expect(artifacts[0]?.['content']).toContain('Risk Level: medium')
+      expect(artifacts[0]?.['file_path']).toBe(`${sessionId}/graph-context.md`)
+    })
+
+    it('stores graph review analysis as a session-level structured artifact', async () => {
+      const sessionId = '2026-01-01-graph-review-analysis-test'
+      const sessionDir = join(sessionsDir, sessionId)
+      mkdirSync(sessionDir, { recursive: true })
+
+      writeFileSync(
+        join(sessionDir, 'graph-review-analysis.json'),
+        JSON.stringify({
+          status: 'ready',
+          summary: 'Prioritize auth boundary changes first.',
+          priorities: [
+            {
+              label: 'Review auth flow',
+            },
+          ],
+          warnings: [],
+        }, null, 2),
+      )
+
+      const sync = new FilesystemSync(db, sessionsDir)
+      await sync.fullScan()
+
+      const artifacts = queryAll(
+        db,
+        'SELECT * FROM markdown_artifacts WHERE session_id = ? AND artifact_type = ?',
+        [sessionId, 'graph-review-analysis'],
+      )
+      expect(artifacts).toHaveLength(1)
+      expect(artifacts[0]?.['content']).toContain('Prioritize auth boundary changes first.')
+      expect(artifacts[0]?.['file_path']).toBe(`${sessionId}/graph-review-analysis.json`)
+    })
+
     it('is idempotent — second scan produces same results', async () => {
       const sessionId = '2026-01-01-idempotent'
       const sessionDir = join(sessionsDir, sessionId)
@@ -245,6 +300,40 @@ API updates.
       // Session should still be single row
       const sessions = queryAll(db, 'SELECT * FROM sessions')
       expect(sessions).toHaveLength(1)
+    })
+
+    it('treats SQLite parsed_at timestamps as UTC when skipping unchanged files', async () => {
+      const sessionId = '2026-01-01-utc-skip'
+      const sessionDir = join(sessionsDir, sessionId)
+      const contextPath = join(sessionDir, 'context.md')
+      mkdirSync(sessionDir, { recursive: true })
+      writeFileSync(contextPath, '# Context\n')
+
+      const sync = new FilesystemSync(db, sessionsDir)
+      await sync.fullScan()
+
+      const first = queryOne(
+        db,
+        'SELECT parsed_at FROM markdown_artifacts WHERE session_id = ? AND artifact_type = ?',
+        [sessionId, 'context'],
+      )
+      expect(first?.['parsed_at']).toBeTruthy()
+
+      // Simulate the common Asia/Shanghai shape: file mtime is just before the
+      // UTC parsed_at instant. Parsing "YYYY-MM-DD HH:mm:ss" as local time would
+      // make this look newer by the timezone offset and force a needless reparse.
+      const beforeParsedAt = new Date(`${String(first?.['parsed_at']).replace(' ', 'T')}Z`)
+      beforeParsedAt.setSeconds(beforeParsedAt.getSeconds() - 1)
+      utimesSync(contextPath, beforeParsedAt, beforeParsedAt)
+
+      await sync.fullScan()
+
+      const second = queryOne(
+        db,
+        'SELECT parsed_at FROM markdown_artifacts WHERE session_id = ? AND artifact_type = ?',
+        [sessionId, 'context'],
+      )
+      expect(second?.['parsed_at']).toBe(first?.['parsed_at'])
     })
 
     it('handles multiple sessions', async () => {

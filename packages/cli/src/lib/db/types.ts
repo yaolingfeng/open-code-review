@@ -2,6 +2,8 @@
  * Database module types for OCR SQLite storage.
  */
 
+import type { SessionStatus, WorkflowType } from "../state/types.js";
+
 // ── Session types ──
 
 export type { WorkflowType, SessionStatus } from "../state/types.js";
@@ -111,6 +113,69 @@ export type UpdateAgentSessionParams = Partial<
 
 export type SweepResult = {
   orphanedIds: string[];
+};
+
+// ── Token usage types ──
+
+export type TokenUsageSource = "manual" | "vendor_event" | "estimated";
+
+export type TokenUsageRow = {
+  id: number;
+  workflow_id: string;
+  agent_session_id: string | null;
+  command_execution_id: number | null;
+  vendor: string;
+  vendor_session_id: string | null;
+  model: string | null;
+  phase: string | null;
+  input_tokens: number;
+  output_tokens: number;
+  cache_read_tokens: number;
+  cache_write_tokens: number;
+  reasoning_tokens: number;
+  total_tokens: number;
+  cost_usd: number | null;
+  source: TokenUsageSource;
+  raw_usage_json: string | null;
+  recorded_at: string;
+};
+
+export type InsertTokenUsageParams = {
+  workflow_id?: string | null;
+  agent_session_id?: string | null;
+  vendor?: string | null;
+  vendor_session_id?: string | null;
+  model?: string | null;
+  phase?: string | null;
+  input_tokens?: number;
+  output_tokens?: number;
+  cache_read_tokens?: number;
+  cache_write_tokens?: number;
+  reasoning_tokens?: number;
+  total_tokens?: number;
+  cost_usd?: number | null;
+  source?: TokenUsageSource;
+  raw_usage_json?: string | null;
+};
+
+export type TokenUsageSummary = {
+  workflow_id: string;
+  input_tokens: number;
+  output_tokens: number;
+  cache_read_tokens: number;
+  cache_write_tokens: number;
+  reasoning_tokens: number;
+  total_tokens: number;
+  cost_usd: number | null;
+  row_count: number;
+  by_agent: Array<{
+    agent_session_id: string | null;
+    name: string | null;
+    persona: string | null;
+    model: string | null;
+    total_tokens: number;
+    cost_usd: number | null;
+  }>;
 };
 
 // ── Migration types ──

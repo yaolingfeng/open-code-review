@@ -54,10 +54,11 @@
       }
     },
     "test": {
-      "executor": "@nx/vitest:test",
+      "executor": "nx:run-commands",
       "outputs": ["{workspaceRoot}/coverage/packages/cli"],
       "options": {
-        "config": "packages/cli/vitest.config.ts"
+        "command": "node packages/cli/scripts/run-vitest.mjs",
+        "cwd": "{workspaceRoot}"
       }
     }
   }

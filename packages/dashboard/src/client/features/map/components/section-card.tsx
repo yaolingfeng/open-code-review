@@ -4,10 +4,10 @@ import { cn, buildIdeLink } from '../../../lib/utils'
 import { useIdeConfig } from '../../../hooks/use-ide-config'
 import { ProgressBar } from '../../../components/ui/progress-bar'
 import { FileRow } from './file-row'
-import type { MapSection } from '../../../lib/api-types'
+import type { MapSectionDetail } from '../../../lib/api-types'
 
 type SectionCardProps = {
-  section: MapSection
+  section: MapSectionDetail
   onToggleFile: (fileId: number, isReviewed: boolean) => void
 }
 

@@ -202,26 +202,44 @@ code-review-map:
 
    **CRITICAL**: Store this canonical file list. It's used for completeness validation in Phase 5.
 
-2. **Categorize each file**:
+2. **Generate graph context** (best-effort):
+
+   ```bash
+   CHANGED_FILES=$(paste -sd, /tmp/ocr-canonical-files.txt)
+   ocr graph context \
+     --workflow map \
+     --files "$CHANGED_FILES" \
+     --session-dir "$SESSION_DIR" \
+     --json >/tmp/ocr-graph-context.json
+   ```
+
+   - This writes `graph-context.md` and `graph-context.json` at the session root.
+   - If graph DB is missing, stale, or has unsupported files, continue map generation.
+   - Graph context can inform topology and flow hypotheses, but the canonical changed-file list remains the git-derived file list in `/tmp/ocr-canonical-files.txt`.
+   - When git diff hunks are available, prefer `changedSymbols` and `changedRanges` to understand which parts of a file changed; when unavailable, fall back to file-level graph nodes.
+
+3. **Categorize each file**:
    - Entry points (routes, handlers, CLI, UI components)
    - Core logic (business logic, services, domain)
    - Infrastructure (config, utilities, shared)
    - Tests
    - Documentation
+   - Use `graph-context.md` changed symbols, impacted files, and unsupported changed files to refine grouping, not to add/remove canonical files
 
-3. **Identify logical sections**:
+4. **Identify logical sections**:
    - Group by feature boundary
    - Group by architectural layer
    - Group by execution flow
    - Group by concern (security, performance)
 
-4. **Determine review order** within sections:
+5. **Determine review order** within sections:
    - Entry points first
    - Core implementations next
    - Supporting files
    - Tests last
+   - Use graph import/call signals as supporting evidence for upstream/downstream order
 
-5. **Save topology to session**:
+6. **Save topology to session**:
    ```
    .ocr/sessions/{id}/map/runs/run-{n}/topology.md
    ```
@@ -231,6 +249,7 @@ code-review-map:
 - [ ] All changed files enumerated
 - [ ] Files categorized by type
 - [ ] Logical sections identified
+- [ ] `graph-context.md/json` generated if graph DB exists; unsupported changed files remain in the map checklist
 - [ ] `topology.md` written
 - [ ] `ocr state transition` called with `--phase "topology"`
 
@@ -252,6 +271,8 @@ code-review-map:
    - Upstream: What calls this code?
    - Downstream: What does this code call?
    - Related: Tests, config, siblings
+   - Use `ocr graph query imports_of/importers_of/callers_of/callees_of/tests_for` where graph context is available
+   - Verify graph-derived relationships against source before treating them as map facts
 
 4. **Collect findings** from all analysts
 
@@ -350,6 +371,7 @@ See `references/map-personas/flow-analyst.md` for persona details.
    - `topology.md` — Section structure
    - `flow-analysis.md` — Dependency context
    - `requirements-mapping.md` — Coverage annotations (if exists)
+   - `graph-context.md` — Graph signals, warnings, unsupported changed files (if exists)
 
 2. **Construct Executive Summary**:
    - 1-2 paragraph narrative hypothesis
@@ -365,19 +387,25 @@ See `references/map-personas/flow-analyst.md` for persona details.
    - Coverage matrix with status indicators
    - Note any gaps
 
-5. **Generate Critical Review Focus**:
+5. **Add Graph Signals**:
+   - Summarize graph risk level, changed symbols, impacted files, test gaps, and unsupported changed files.
+   - Keep this separate from canonical file coverage.
+   - Do not claim a dependency or risk solely from graph output unless source or diff confirms it.
+
+6. **Generate Critical Review Focus**:
    - Identify areas where human judgment adds value
    - Focus on: business logic, security, edge cases, architectural decisions
    - Map each to requirement or concern
    - Do NOT perform code review — just flag areas for attention
 
-6. **Generate Manual Verification**:
+7. **Generate Manual Verification**:
    - **Critical Path**: Happy-path tests from requirements
    - **Edge Cases & Error Handling**: From implementation analysis
    - **Non-Functional**: Performance, security checks
    - Omit only if changeset is purely docs/config
+   - Include graph test gaps as candidates for manual verification after confirming against actual tests
 
-7. **Build File Review sections**:
+8. **Build File Review sections**:
    For each section from topology:
    - Narrative hypothesis (1-2 sentences)
    - File table with `Done` column (empty, reviewer marks `X`)
@@ -387,25 +415,27 @@ See `references/map-personas/flow-analyst.md` for persona details.
      - Specific areas mapped to requirements/concerns
      - Do NOT do code review — just flag for reviewer attention
 
-8. **Generate Section Dependencies**:
+9. **Generate Section Dependencies**:
    - Review flow analysis cross-file flows to identify section-to-section call chains
+   - Use graph import/call/impact data as a supplemental signal
    - For each pair of sections with meaningful dependencies, add a table row
    - Direction: caller section → callee section
    - Relationship should be a 3-8 word description (e.g., "Auth middleware protects routes")
    - If sections are independent, leave the table body empty (headers only)
 
-9. **Create File Index**:
+10. **Create File Index**:
    - Alphabetical list of ALL changed files
    - Section reference for each
+   - Include unsupported changed files; mark them for manual tracing if graph context flagged them
 
-10. **Validate completeness**:
+11. **Validate completeness**:
    ```bash
    EXPECTED=$(git diff --cached --name-only | wc -l)
    MAPPED=$(grep -oE '\| `[^`]+` \|' map.md | wc -l)
    [ "$EXPECTED" -ne "$MAPPED" ] && echo "ERROR: Missing files!"
    ```
 
-11. **Pipe structured map data to CLI**:
+12. **Pipe structured map data to CLI**:
 
     Construct a JSON object with the map's structured data and pipe it to the CLI. The CLI validates, writes `map-meta.json`, and records a `map_completed` orchestration event — all in one command.
 
@@ -443,7 +473,7 @@ See `references/map-personas/flow-analyst.md` for persona details.
 
     > The CLI validates the JSON schema, writes `map-meta.json` to the correct run directory, and records the event in SQLite. The orchestrator MUST NOT write `map-meta.json` directly.
 
-12. **Save final map** (presentation artifact):
+13. **Save final map** (presentation artifact):
     ```
     .ocr/sessions/{id}/map/runs/run-{n}/map.md
     ```
@@ -458,6 +488,7 @@ See `references/map-template.md` for the complete template.
 - [ ] Executive Summary with hypothesis
 - [ ] Questions & Clarifications populated
 - [ ] Requirements Coverage matrix (if applicable)
+- [ ] Graph Signals section included when `graph-context.md` exists
 - [ ] Critical Review Focus areas identified
 - [ ] Manual Verification tests generated (or omitted if docs-only)
 - [ ] All File Review sections with file tables
@@ -497,7 +528,15 @@ See `references/map-template.md` for the complete template.
    [Display map content]
    ```
 
-3. **Update state**:
+3. **Export token usage artifacts** (best-effort):
+   ```bash
+   ocr usage export --workflow "$SESSION_ID" --session-dir "$SESSION_DIR"
+   ```
+
+   This writes `usage.md` and `usage.json` at the session root when token
+   usage is available. Do not block map completion if usage is unavailable.
+
+4. **Update state**:
    ```bash
    ocr state transition \
      --phase "complete" \
@@ -510,6 +549,7 @@ See `references/map-template.md` for the complete template.
 ### Phase 6 Checkpoint
 
 - [ ] Map presented to user
+- [ ] `usage.md/json` exported best-effort
 - [ ] `ocr state transition` called with `--phase "complete"`
 
 ---
@@ -523,7 +563,7 @@ See `references/map-template.md` for the complete template.
 | 3 | `map/runs/run-{n}/flow-analysis.md` |
 | 4 | `map/runs/run-{n}/requirements-mapping.md` (if requirements) |
 | 5 | `map/runs/run-{n}/map.md` |
-| 6 | (presentation only) |
+| 6 | `usage.md/json` (best-effort), presentation |
 
 ---
 

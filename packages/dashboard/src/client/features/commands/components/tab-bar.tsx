@@ -1,4 +1,4 @@
-import { X, Ban, CheckCircle2, XCircle } from 'lucide-react'
+import { X, Ban, CheckCircle2, Loader2, XCircle } from 'lucide-react'
 import { cn } from '../../../lib/utils'
 import type { CommandTab } from '../../../providers/command-state-provider'
 
@@ -35,6 +35,8 @@ export function TabBar({ tabs, activeTabId, onSelectTab, onDismissTab }: TabBarP
                 <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-indigo-400 opacity-75" />
                 <span className="relative inline-flex h-2 w-2 rounded-full bg-indigo-500" />
               </span>
+            ) : tab.status === 'cancelling' ? (
+              <Loader2 className="h-3 w-3 animate-spin text-amber-500" />
             ) : tab.status === 'complete' ? (
               <CheckCircle2 className="h-3 w-3 text-emerald-500" />
             ) : tab.status === 'cancelled' ? (
@@ -46,7 +48,7 @@ export function TabBar({ tabs, activeTabId, onSelectTab, onDismissTab }: TabBarP
             <span className="capitalize">{label}</span>
             <span className="text-[10px] text-zinc-400 dark:text-zinc-500">#{tab.executionId}</span>
 
-            {tab.status !== 'running' && (
+            {tab.status !== 'running' && tab.status !== 'cancelling' && (
               <span
                 role="button"
                 tabIndex={0}

@@ -19,7 +19,7 @@ import type {
   SpawnOptions,
   SpawnResult,
 } from './types.js'
-import { extractAssistantText } from './helpers.js'
+import { extractAssistantText, extractUsageEvent } from './helpers.js'
 import { cleanEnv } from '../../socket/env.js'
 import {
   buildResumeArgs as buildResumeArgsShared,
@@ -120,6 +120,12 @@ export class ClaudeCodeAdapter implements AiCliAdapter {
       stdio: ['pipe', 'pipe', 'pipe'],
     })
 
+    // Detached child processes keep the parent's event loop alive,
+    // preventing process.exit() from firing after httpServer.close().
+    // unref() removes the child from the parent's reference count so
+    // the dashboard can shut down cleanly without waiting for the AI.
+    if (isWorkflow) proc.unref()
+
     // Write prompt to stdin
     proc.stdin?.write(opts.prompt)
     proc.stdin?.end()
@@ -213,6 +219,7 @@ class ClaudeLineParser implements LineParser {
 
     const events: NormalizedEvent[] = []
     const type = parsed['type'] as string | undefined
+    const usage = extractUsageEvent(parsed)
 
     // Capture session ID from any message type
     if (parsed['session_id']) {
@@ -351,6 +358,10 @@ class ClaudeLineParser implements LineParser {
       const message =
         typeof parsed['message'] === 'string' ? (parsed['message'] as string) : 'Agent error'
       events.push({ type: 'error', source: 'agent', message })
+    }
+
+    if (usage) {
+      events.push(usage)
     }
 
     return events

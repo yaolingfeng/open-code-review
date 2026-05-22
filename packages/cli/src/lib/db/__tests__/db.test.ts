@@ -54,6 +54,7 @@ describe("Database creation and migration", () => {
 
     const expectedTables = [
       "command_executions",
+      "agent_token_usage",
       "map_files",
       "map_runs",
       "map_sections",

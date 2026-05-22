@@ -6,11 +6,13 @@ import {
   openDatabase,
   closeAllDatabases,
   insertSession,
+  insertEvent,
   insertAgentSession,
   getAgentSession,
   listAgentSessionsForWorkflow,
   getLatestAgentSessionWithVendorId,
   bumpAgentSessionHeartbeat,
+  bumpWorkflowCommandHeartbeat,
   setAgentSessionVendorId,
   bindVendorSessionIdOpportunistically,
   setAgentSessionStatus,
@@ -230,6 +232,102 @@ describe("sweepStaleAgentSessions", () => {
     const row = getAgentSession(db, "agent-fresh");
     expect(row?.status).toBe("running");
     expect(row?.ended_at).toBeNull();
+  });
+
+  it("does not orphan a stale workflow row when orchestration events are still advancing", () => {
+    db.run(
+      `INSERT INTO command_executions
+         (uid, command, args, workflow_id, vendor, last_heartbeat_at)
+       VALUES ('workflow-stale-with-event', 'review master', NULL, ?, 'claude', datetime('now'))`,
+      [WORKFLOW_ID],
+    );
+    db.run(
+      `UPDATE command_executions
+         SET last_heartbeat_at = datetime('now', '-300 seconds')
+         WHERE uid = 'workflow-stale-with-event'`,
+    );
+    insertEvent(db, {
+      session_id: WORKFLOW_ID,
+      event_type: "phase_transition",
+      phase: "analysis",
+      phase_number: 3,
+      round: 1,
+    });
+
+    const result = sweepStaleAgentSessions(db, 60);
+
+    expect(result.orphanedIds).toEqual([]);
+    expect(getAgentSession(db, "workflow-stale-with-event")?.status).toBe("running");
+  });
+
+  it("still orphans stale reviewer rows even when the workflow has recent events", () => {
+    insertAgentSession(db, {
+      id: "agent-stale-with-event",
+      workflow_id: WORKFLOW_ID,
+      vendor: "claude",
+    });
+    db.run(
+      `UPDATE command_executions
+         SET last_heartbeat_at = datetime('now', '-300 seconds')
+         WHERE uid = 'agent-stale-with-event'`,
+    );
+    insertEvent(db, {
+      session_id: WORKFLOW_ID,
+      event_type: "phase_transition",
+      phase: "analysis",
+      phase_number: 3,
+      round: 1,
+    });
+
+    const result = sweepStaleAgentSessions(db, 60);
+
+    expect(result.orphanedIds).toEqual(["agent-stale-with-event"]);
+    expect(getAgentSession(db, "agent-stale-with-event")?.status).toBe("orphaned");
+  });
+
+  it("does not orphan a stale workflow row when another command in the workflow has a fresh heartbeat", () => {
+    db.run(
+      `INSERT INTO command_executions
+         (uid, command, args, workflow_id, vendor, last_heartbeat_at)
+       VALUES ('workflow-stale-with-sibling', 'review master', NULL, ?, 'claude', datetime('now'))`,
+      [WORKFLOW_ID],
+    );
+    insertAgentSession(db, {
+      id: "agent-fresh-sibling",
+      workflow_id: WORKFLOW_ID,
+      vendor: "claude",
+    });
+    db.run(
+      `UPDATE command_executions
+         SET last_heartbeat_at = datetime('now', '-300 seconds')
+         WHERE uid = 'workflow-stale-with-sibling'`,
+    );
+
+    const result = sweepStaleAgentSessions(db, 60);
+
+    expect(result.orphanedIds).toEqual([]);
+    expect(getAgentSession(db, "workflow-stale-with-sibling")?.status).toBe("running");
+    expect(getAgentSession(db, "agent-fresh-sibling")?.status).toBe("running");
+  });
+
+  it("lets start-instance refresh the stale workflow row before sweeping", () => {
+    db.run(
+      `INSERT INTO command_executions
+         (uid, command, args, workflow_id, vendor, last_heartbeat_at)
+       VALUES ('workflow-starting-reviewer', 'ocr review master', NULL, ?, 'claude', datetime('now'))`,
+      [WORKFLOW_ID],
+    );
+    db.run(
+      `UPDATE command_executions
+         SET last_heartbeat_at = datetime('now', '-300 seconds')
+         WHERE uid = 'workflow-starting-reviewer'`,
+    );
+
+    bumpWorkflowCommandHeartbeat(db, WORKFLOW_ID);
+    const result = sweepStaleAgentSessions(db, 60);
+
+    expect(result.orphanedIds).toEqual([]);
+    expect(getAgentSession(db, "workflow-starting-reviewer")?.status).toBe("running");
   });
 
   it("does not re-touch already-terminal rows", () => {

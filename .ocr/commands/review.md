@@ -69,7 +69,7 @@ ocr state show
 
 ### Step 3: Determine action
 
-- **If `--fresh` flag**: Delete the session directory and start from Phase 1
+- **If `--fresh` flag**: Delete the session directory, then initialize SQLite with `ocr state init --fresh` so old rounds/events/agent rows are reset before Phase 1
 - **If session exists and status is `closed`**: Start new round (round-{n+1}) — reuse existing `discovered-standards.md` and `context.md`, create new `rounds/round-{n+1}/` directory
 - **If session exists, status is `active`, and files match**: Resume from `current_phase`
 - **If session exists but state and files mismatch**: Report discrepancy and ask user which to trust
@@ -106,7 +106,7 @@ State is managed via `ocr state` CLI commands (stored in SQLite at `.ocr/data/oc
 
 | Command | When to Use |
 |---------|-------------|
-| `ocr state init --session-id <id> --branch <branch> --workflow-type review --session-dir <path>` | Phase 1: Create the session |
+| `ocr state init --session-id <id> --branch <branch> --workflow-type review --session-dir <path> [--fresh]` | Phase 1: Create the session; include `--fresh` only when `/ocr-review --fresh` was requested |
 | `ocr state transition --phase <phase> --phase-number <N> [--current-round <N>]` | Each phase boundary |
 | `ocr state show` | Check current session state |
 | `ocr state close` | Phase 8: Close the session |
