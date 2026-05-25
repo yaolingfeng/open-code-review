@@ -6,7 +6,9 @@ import { tmpdir } from "node:os";
 const graphMocks = vi.hoisted(() => ({
   buildGraph: vi.fn(),
   generateGraphContext: vi.fn(),
+  generateGraphMinimalContext: vi.fn(),
   generateGraphReviewAnalysis: vi.fn(),
+  generateGraphReviewContext: vi.fn(),
   getGraphStatus: vi.fn(),
   getImpactRadius: vi.fn(),
   queryGraph: vi.fn(),
@@ -210,6 +212,100 @@ function makeReviewAnalysis({
   };
 }
 
+function makeMinimalContext() {
+  return {
+    version: 1,
+    workflow: "review",
+    status: "ready",
+    summary: "minimal ok",
+    risk: {
+      level: "medium",
+      score: 0.42,
+    },
+    counts: {
+      changedFiles: 1,
+      changedSymbols: 1,
+      impactedFiles: 2,
+      testGaps: 1,
+    },
+    topPriorities: [
+      {
+        qualifiedName: "src/auth.ts#login",
+        filePath: "src/auth.ts",
+        reason: "Highest graph priority.",
+        score: 0.9,
+      },
+    ],
+    warnings: [],
+    nextToolSuggestions: [
+      {
+        command: "ocr graph query tests_for --target src/auth.ts#login --limit 40",
+        reason: "Check linked tests.",
+        expectedValue: "Bounded test coverage lookup.",
+        evidenceRequirement: "Confirm with source.",
+        priority: "high",
+      },
+    ],
+    budget: {
+      maxPriorities: 5,
+      maxWarnings: 5,
+      maxSuggestions: 4,
+      truncated: false,
+    },
+    generatedAt: "2026-01-01T00:00:00.000Z",
+    sourceScope: {
+      workflow: "review",
+      changedFileCount: 1,
+      changedSymbolPrecision: "file",
+    },
+  };
+}
+
+function makeReviewContext() {
+  return {
+    version: 1,
+    workflow: "review",
+    status: "ready",
+    summary: "review context ok",
+    snippets: [
+      {
+        filePath: "src/auth.ts",
+        lineStart: 10,
+        lineEnd: 12,
+        qualifiedNames: ["src/auth.ts#login"],
+        kind: "changed_symbol",
+        reason: "Changed symbol selected for direct source verification.",
+        text: "export function login() {\n  return true\n}",
+        truncated: false,
+      },
+    ],
+    omittedFiles: [],
+    warnings: [],
+    nextToolSuggestions: [
+      {
+        command: "ocr graph query tests_for --target src/auth.ts#login --limit 40",
+        reason: "Check linked tests.",
+        expectedValue: "Bounded test coverage lookup.",
+        evidenceRequirement: "Confirm with source.",
+        priority: "high",
+      },
+    ],
+    budget: {
+      maxFiles: 6,
+      maxSnippets: 12,
+      maxLinesPerSnippet: 40,
+      maxChars: 16000,
+      truncated: false,
+    },
+    generatedAt: "2026-01-01T00:00:00.000Z",
+    sourceScope: {
+      workflow: "review",
+      changedFileCount: 1,
+      changedSymbolPrecision: "file",
+    },
+  };
+}
+
 async function runGraph(args: string[] = []): Promise<{ logOutput: string; errorOutput: string }> {
   const logLines: string[] = [];
   const errorLines: string[] = [];
@@ -243,7 +339,9 @@ describe("graphCommand", () => {
     graphMocks.queryGraph.mockResolvedValue(makeQueryResult("query ok"));
     graphMocks.getImpactRadius.mockResolvedValue(makeQueryResult("impact ok"));
     graphMocks.searchGraph.mockResolvedValue(makeSearchResult({ summary: "search ok" }));
+    graphMocks.generateGraphMinimalContext.mockResolvedValue(makeMinimalContext());
     graphMocks.generateGraphReviewAnalysis.mockResolvedValue(makeReviewAnalysis({ summary: "analysis ok" }));
+    graphMocks.generateGraphReviewContext.mockResolvedValue(makeReviewContext());
     graphMocks.generateGraphContext.mockResolvedValue({
       version: 1,
       workflow: "map",
@@ -288,7 +386,9 @@ describe("graphCommand", () => {
       "impact",
       "context",
       "search",
+      "minimal-context",
       "review-analysis",
+      "review-context",
     ]);
   });
 
@@ -492,6 +592,52 @@ describe("graphCommand", () => {
       query: "auth",
       summary: "search ok",
     });
+  });
+
+  it("forwards minimal context options", async () => {
+    const result = await runGraph([
+      "minimal-context",
+      "--workflow",
+      "review",
+      "--base",
+      "origin/main",
+      "--files",
+      "src/auth.ts, src/user.ts",
+      "--depth",
+      "3",
+      "--max-priorities",
+      "2",
+      "--max-warnings",
+      "3",
+      "--max-suggestions",
+      "2",
+      "--json",
+    ]);
+
+    expect(graphMocks.generateGraphMinimalContext).toHaveBeenCalledWith({
+      repoRoot: tmpDir,
+      workflow: "review",
+      base: "origin/main",
+      changedFiles: ["src/auth.ts", "src/user.ts"],
+      maxDepth: 3,
+      maxPriorities: 2,
+      maxWarnings: 3,
+      maxSuggestions: 2,
+      writeArtifacts: false,
+    });
+    expect(JSON.parse(result.logOutput)).toMatchObject({
+      status: "ready",
+      summary: "minimal ok",
+    });
+  });
+
+  it("prints minimal context suggestions for humans", async () => {
+    const result = await runGraph(["minimal-context", "--workflow", "review", "--files", "src/auth.ts"]);
+
+    expect(result.logOutput).toContain("Status: ready");
+    expect(result.logOutput).toContain("Risk: medium (0.42)");
+    expect(result.logOutput).toContain("Next tool suggestions");
+    expect(result.logOutput).toContain("ocr graph query tests_for --target src/auth.ts#login --limit 40");
   });
 
   it("prints explicit graph search exploration states", async () => {
@@ -707,5 +853,58 @@ describe("graphCommand", () => {
     const parsed = JSON.parse(result.logOutput);
     expect(parsed.warnings.some((warning: string) => warning.includes("downgraded review-analysis traversal depth from 8 to 2"))).toBe(true);
     expect(parsed.warnings.some((warning: string) => warning.includes("module summaries were requested"))).toBe(true);
+  });
+
+  it("forwards graph review-context options", async () => {
+    const result = await runGraph([
+      "review-context",
+      "--workflow",
+      "review",
+      "--base",
+      "origin/main",
+      "--files",
+      "src/auth.ts, src/user.ts",
+      "--depth",
+      "3",
+      "--max-files",
+      "2",
+      "--max-snippets",
+      "5",
+      "--max-lines-per-snippet",
+      "20",
+      "--max-chars",
+      "5000",
+      "--max-suggestions",
+      "2",
+      "--json",
+    ]);
+
+    expect(graphMocks.generateGraphReviewContext).toHaveBeenCalledWith({
+      repoRoot: tmpDir,
+      workflow: "review",
+      base: "origin/main",
+      changedFiles: ["src/auth.ts", "src/user.ts"],
+      maxDepth: 3,
+      maxFiles: 2,
+      maxSnippets: 5,
+      maxLinesPerSnippet: 20,
+      maxChars: 5000,
+      maxSuggestions: 2,
+      writeArtifacts: false,
+    });
+    expect(JSON.parse(result.logOutput)).toMatchObject({
+      status: "ready",
+      summary: "review context ok",
+    });
+  });
+
+  it("prints graph review-context snippets for humans", async () => {
+    const result = await runGraph(["review-context", "--workflow", "review", "--files", "src/auth.ts"]);
+
+    expect(result.logOutput).toContain("Status: ready");
+    expect(result.logOutput).toContain("Graph snippets are investigation context");
+    expect(result.logOutput).toContain("[changed_symbol] src/auth.ts:10-12");
+    expect(result.logOutput).toContain("export function login()");
+    expect(result.logOutput).toContain("Next tool suggestions");
   });
 });

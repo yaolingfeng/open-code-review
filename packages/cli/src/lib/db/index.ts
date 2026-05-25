@@ -71,6 +71,30 @@ export {
   exportTokenUsageArtifacts,
 } from "./token-usage.js";
 
+export {
+  compareWorkflowUsage,
+} from "./usage-compare.js";
+
+export type {
+  UsageComparison,
+  UsageComparisonSide,
+  UsageExplorationTelemetry,
+  UsageMetricDelta,
+} from "./usage-compare.js";
+
+export {
+  benchmarkWorkflowUsage,
+  formatBenchmarkPercent,
+} from "./usage-benchmark.js";
+
+export type {
+  UsageBenchmarkPair,
+  UsageBenchmarkQualityGate,
+  UsageBenchmarkResult,
+  UsageBenchmarkRun,
+  UsageBenchmarkThresholds,
+} from "./usage-benchmark.js";
+
 export type { WorkflowType, SessionStatus } from "../state/types.js";
 
 export { runMigrations, MIGRATIONS } from "./migrations.js";

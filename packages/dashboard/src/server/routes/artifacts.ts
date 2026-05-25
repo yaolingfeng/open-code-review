@@ -17,7 +17,9 @@ const VALID_ARTIFACT_TYPES = new Set([
   'topology',
   'requirements-mapping',
   'graph-context',
+  'graph-minimal-context',
   'graph-review-analysis',
+  'graph-review-context',
   'usage',
 ])
 

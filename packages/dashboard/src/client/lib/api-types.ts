@@ -307,6 +307,15 @@ export type GraphSearchResult = {
   results: GraphSearchResultItem[]
   warnings: string[]
   truncated: boolean
+  nextToolSuggestions?: GraphNextToolSuggestion[]
+}
+
+export type GraphNextToolSuggestion = {
+  command: string
+  reason: string
+  expectedValue: string
+  evidenceRequirement: string
+  priority: 'high' | 'medium' | 'low'
 }
 
 export type GraphPriority = {
@@ -382,6 +391,7 @@ export type GraphReviewAnalysis = {
   }
   warnings: string[]
   truncated: boolean
+  nextToolSuggestions?: GraphNextToolSuggestion[]
   generatedAt: string
   sourceScope: {
     workflow: 'review' | 'map'
@@ -402,6 +412,123 @@ export type GraphReviewAnalysis = {
     truncationReason?: string
     downgradedReason?: string
   }
+}
+
+export type GraphMinimalContext = {
+  version: 1
+  workflow: 'review' | 'map'
+  status: 'ready' | 'missing' | 'stale' | 'degraded' | 'error'
+  summary: string
+  risk: {
+    level: 'low' | 'medium' | 'high' | 'unknown'
+    score: number
+  }
+  counts: {
+    changedFiles: number
+    changedSymbols: number
+    impactedFiles: number
+    testGaps: number
+  }
+  topPriorities: GraphPriority[]
+  warnings: string[]
+  nextToolSuggestions: GraphNextToolSuggestion[]
+  budget: {
+    maxPriorities: number
+    maxWarnings: number
+    maxSuggestions: number
+    truncated: boolean
+  }
+  generatedAt: string
+  sourceScope: {
+    workflow: 'review' | 'map'
+    changedFileCount: number
+    changedSymbolPrecision: 'symbol' | 'file' | 'none'
+  }
+}
+
+export type GraphReviewContextSnippet = {
+  filePath: string
+  lineStart: number
+  lineEnd: number
+  qualifiedNames: string[]
+  kind: 'changed_symbol' | 'impacted_symbol'
+  reason: string
+  text: string
+  truncated: boolean
+}
+
+export type GraphReviewContext = {
+  version: 1
+  workflow: 'review' | 'map'
+  status: 'ready' | 'missing' | 'stale' | 'degraded' | 'error'
+  summary: string
+  snippets: GraphReviewContextSnippet[]
+  omittedFiles: Array<{
+    filePath: string
+    reason: string
+  }>
+  warnings: string[]
+  nextToolSuggestions: GraphNextToolSuggestion[]
+  budget: {
+    maxFiles: number
+    maxSnippets: number
+    maxLinesPerSnippet: number
+    maxChars: number
+    truncated: boolean
+  }
+  generatedAt: string
+  sourceScope: {
+    workflow: 'review' | 'map'
+    changedFileCount: number
+    changedSymbolPrecision: 'symbol' | 'file' | 'none'
+  }
+}
+
+export type UsageMetricDelta = {
+  baseline: number | null
+  candidate: number | null
+  absolute: number | null
+  percent: number | null
+}
+
+export type UsageComparison = {
+  baseline: {
+    workflow_id: string
+    summary: TokenUsageSummary
+    row_count: number
+    telemetry: {
+      executionCount: number
+      eventCount: number
+      missingEventJournals: number
+      readCalls: number
+      grepCalls: number
+      bashCalls: number
+      graphCalls: number
+    }
+    caveats: string[]
+  }
+  candidate: {
+    workflow_id: string
+    summary: TokenUsageSummary
+    row_count: number
+    telemetry: {
+      executionCount: number
+      eventCount: number
+      missingEventJournals: number
+      readCalls: number
+      grepCalls: number
+      bashCalls: number
+      graphCalls: number
+    }
+    caveats: string[]
+  }
+  delta: Record<string, UsageMetricDelta>
+  verdict: {
+    tokenEfficiencyImproved: boolean | null
+    explorationImproved: boolean | null
+    summary: string
+  }
+  caveats: string[]
 }
 
 export type MapRun = {

@@ -76,16 +76,18 @@ vi.mock('../../graph/graph-exploration-panel', () => ({
 
 vi.mock('../../usage/token-usage-card', () => ({
   TokenUsageCard: ({
+    workflowId,
     summary,
     isLoading,
     error,
   }: {
+    workflowId?: string
     summary?: { total_tokens?: number }
     isLoading?: boolean
     error?: unknown
   }) => (
     <div>
-      TokenUsageCard:{summary?.total_tokens ?? 0}:{isLoading ? 'loading' : 'idle'}:
+      TokenUsageCard:{workflowId}:{summary?.total_tokens ?? 0}:{isLoading ? 'loading' : 'idle'}:
       {error ? 'error' : 'ok'}
     </div>
   ),
@@ -185,7 +187,7 @@ describe('SessionDetailPage', () => {
     expect(html).toContain('LivenessHeader:session-1')
     expect(html).toContain('GraphStatusBadge')
     expect(html).toContain('Active')
-    expect(html).toContain('TokenUsageCard:321:idle:ok')
+    expect(html).toContain('TokenUsageCard:session-1:321:idle:ok')
     expect(html).toContain('GraphExplorationPanel:session-1:feature/auth')
     expect(html).toContain('SessionTabs:session-1')
     expect(html).toContain('Event Log')

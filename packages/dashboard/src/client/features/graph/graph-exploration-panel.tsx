@@ -1,9 +1,25 @@
 import { useMemo, useState } from 'react'
-import { AlertTriangle, FileSearch, Network } from 'lucide-react'
+import { AlertTriangle, FileSearch, Network, Scissors } from 'lucide-react'
 import { GraphContextCard } from './graph-context-card'
-import { useGraphContextArtifact, useGraphReviewAnalysis, useGraphReviewAnalysisArtifact, useGraphSearch } from './use-graph'
+import {
+  useGraphContextArtifact,
+  useGraphMinimalContext,
+  useGraphMinimalContextArtifact,
+  useGraphReviewAnalysis,
+  useGraphReviewAnalysisArtifact,
+  useGraphReviewContext,
+  useGraphReviewContextArtifact,
+  useGraphSearch,
+} from './use-graph'
 import { cn } from '../../lib/utils'
-import type { GraphReviewAnalysis, GraphReviewAnalysisHint, SessionSummary } from '../../lib/api-types'
+import type {
+  GraphMinimalContext,
+  GraphNextToolSuggestion,
+  GraphReviewAnalysis,
+  GraphReviewAnalysisHint,
+  GraphReviewContext,
+  SessionSummary,
+} from '../../lib/api-types'
 
 type GraphExplorationPanelProps = {
   session: SessionSummary
@@ -76,16 +92,80 @@ function artifactAnalysis(content: string | undefined): GraphReviewAnalysis | nu
   }
 }
 
+function artifactMinimalContext(content: string | undefined): GraphMinimalContext | null {
+  if (!content) return null
+  try {
+    const parsed = JSON.parse(content) as Partial<GraphMinimalContext>
+    return parsed && typeof parsed.summary === 'string' && parsed.counts ? parsed as GraphMinimalContext : null
+  } catch {
+    return null
+  }
+}
+
+function artifactReviewContext(content: string | undefined): GraphReviewContext | null {
+  if (!content) return null
+  try {
+    const parsed = JSON.parse(content) as Partial<GraphReviewContext>
+    return parsed && typeof parsed.summary === 'string' && Array.isArray(parsed.snippets) ? parsed as GraphReviewContext : null
+  } catch {
+    return null
+  }
+}
+
+function SuggestionsList({ suggestions }: { suggestions: GraphNextToolSuggestion[] }) {
+  if (suggestions.length === 0) {
+    return <p className="text-sm text-zinc-500 dark:text-zinc-400">No next tool suggestions yet.</p>
+  }
+  return (
+    <div className="space-y-2">
+      {suggestions.slice(0, 5).map((suggestion) => (
+        <div key={suggestion.command} className="rounded-md border border-zinc-200 p-3 text-sm dark:border-zinc-800">
+          <div className="flex flex-wrap items-center gap-2">
+            <span className={cn(
+              'rounded-full border px-2 py-0.5 text-xs font-medium',
+              suggestion.priority === 'high'
+                ? 'border-red-500/25 bg-red-500/10 text-red-700 dark:text-red-300'
+                : suggestion.priority === 'medium'
+                  ? 'border-yellow-500/25 bg-yellow-500/10 text-yellow-700 dark:text-yellow-300'
+                  : 'border-zinc-200 text-zinc-600 dark:border-zinc-700 dark:text-zinc-300',
+            )}>
+              {suggestion.priority}
+            </span>
+            <code className="break-all rounded bg-zinc-100 px-1.5 py-0.5 text-xs text-zinc-800 dark:bg-zinc-800 dark:text-zinc-100">
+              {suggestion.command}
+            </code>
+          </div>
+          <p className="mt-2 text-zinc-700 dark:text-zinc-300">{suggestion.reason}</p>
+          <p className="mt-1 text-xs text-zinc-500 dark:text-zinc-400">{suggestion.evidenceRequirement}</p>
+        </div>
+      ))}
+    </div>
+  )
+}
+
 export function GraphExplorationPanel({ session, initialQuery = '' }: GraphExplorationPanelProps) {
   const workflow: 'map' | 'review' = session.workflow_type === 'map' && !session.has_review ? 'map' : 'review'
   const [query, setQuery] = useState(initialQuery)
   const [reanalyzeRequested, setReanalyzeRequested] = useState(false)
   const [includeModuleSummaries, setIncludeModuleSummaries] = useState(false)
+  const [reviewContextRequested, setReviewContextRequested] = useState(false)
   const [analysisNotice, setAnalysisNotice] = useState<string | null>(null)
   const trimmedQuery = query.trim()
 
   const graphContextArtifact = useGraphContextArtifact(session.id)
+  const graphMinimalContextArtifact = useGraphMinimalContextArtifact(session.id)
   const graphReviewAnalysisArtifact = useGraphReviewAnalysisArtifact(session.id)
+  const graphReviewContextArtifact = useGraphReviewContextArtifact(session.id)
+  const liveMinimalContext = useGraphMinimalContext({
+    workflow,
+    maxDepth: 2,
+    maxFiles: 12,
+    maxHints: 4,
+    maxPriorities: 5,
+    maxWarnings: 5,
+    maxSuggestions: 5,
+    enabled: true,
+  })
   const liveAnalysis = useGraphReviewAnalysis({
     workflow,
     sessionDir: session.session_dir,
@@ -96,7 +176,20 @@ export function GraphExplorationPanel({ session, initialQuery = '' }: GraphExplo
     maxModules: includeModuleSummaries ? 3 : 0,
     enabled: reanalyzeRequested,
   })
+  const liveReviewContext = useGraphReviewContext({
+    workflow,
+    maxDepth: 2,
+    maxNodes: 60,
+    maxFiles: 6,
+    maxSnippets: 8,
+    maxLinesPerSnippet: 40,
+    maxChars: 12000,
+    maxSuggestions: 4,
+    enabled: reviewContextRequested,
+  })
   const search = useGraphSearch(trimmedQuery, 10)
+  const minimalContext = liveMinimalContext.data ?? artifactMinimalContext(graphMinimalContextArtifact.data?.content)
+  const reviewContext = liveReviewContext.data ?? artifactReviewContext(graphReviewContextArtifact.data?.content)
 
   const analysisWarnings = useMemo(() => {
     const warnings = new Set<string>()
@@ -200,6 +293,71 @@ export function GraphExplorationPanel({ session, initialQuery = '' }: GraphExplo
       </div>
 
       <div className="rounded-md border border-zinc-200 p-4 dark:border-zinc-800">
+        <div className="mb-3 flex flex-wrap items-center justify-between gap-3">
+          <div>
+            <h3 className="text-sm font-medium text-zinc-900 dark:text-zinc-100">Minimal graph context</h3>
+            <p className="text-sm text-zinc-500 dark:text-zinc-400">
+              Summary-first graph signal for low-token review routing.
+            </p>
+          </div>
+          {minimalContext && <StatusPill status={minimalContext.status} />}
+        </div>
+        {liveMinimalContext.isLoading ? (
+          <p className="text-sm text-zinc-500 dark:text-zinc-400">Loading minimal graph context…</p>
+        ) : liveMinimalContext.isError && !minimalContext ? (
+          <p className="text-sm text-red-600 dark:text-red-400">Failed to load minimal graph context.</p>
+        ) : minimalContext ? (
+          <div className="space-y-4">
+            <p className="text-sm text-zinc-700 dark:text-zinc-300">{minimalContext.summary}</p>
+            <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-5">
+              <div className="rounded-md border border-zinc-200 p-3 dark:border-zinc-800">
+                <SectionTitle>Risk</SectionTitle>
+                <div className="text-lg font-semibold capitalize text-zinc-900 dark:text-zinc-100">
+                  {minimalContext.risk.level} ({minimalContext.risk.score.toFixed(2)})
+                </div>
+              </div>
+              <div className="rounded-md border border-zinc-200 p-3 dark:border-zinc-800">
+                <SectionTitle>Changed</SectionTitle>
+                <div className="text-lg font-semibold text-zinc-900 dark:text-zinc-100">{minimalContext.counts.changedFiles}</div>
+              </div>
+              <div className="rounded-md border border-zinc-200 p-3 dark:border-zinc-800">
+                <SectionTitle>Symbols</SectionTitle>
+                <div className="text-lg font-semibold text-zinc-900 dark:text-zinc-100">{minimalContext.counts.changedSymbols}</div>
+              </div>
+              <div className="rounded-md border border-zinc-200 p-3 dark:border-zinc-800">
+                <SectionTitle>Impacted</SectionTitle>
+                <div className="text-lg font-semibold text-zinc-900 dark:text-zinc-100">{minimalContext.counts.impactedFiles}</div>
+              </div>
+              <div className="rounded-md border border-zinc-200 p-3 dark:border-zinc-800">
+                <SectionTitle>Test gaps</SectionTitle>
+                <div className="text-lg font-semibold text-zinc-900 dark:text-zinc-100">{minimalContext.counts.testGaps}</div>
+              </div>
+            </div>
+            <div className="grid gap-4 lg:grid-cols-2">
+              <div>
+                <SectionTitle>Top priorities</SectionTitle>
+                <BulletList
+                  items={minimalContext.topPriorities.map((priority) => `${priority.qualifiedName} (${priority.filePath}) — ${priority.reason}`)}
+                  empty="No top priorities yet."
+                />
+              </div>
+              <div>
+                <SectionTitle>Next tool suggestions</SectionTitle>
+                <SuggestionsList suggestions={minimalContext.nextToolSuggestions} />
+              </div>
+            </div>
+            {minimalContext.warnings.length > 0 && (
+              <div className="rounded-md border border-yellow-500/25 bg-yellow-500/10 p-3 text-sm text-yellow-800 dark:text-yellow-200">
+                <BulletList items={minimalContext.warnings} empty="" />
+              </div>
+            )}
+          </div>
+        ) : (
+          <p className="text-sm text-zinc-500 dark:text-zinc-400">No minimal graph context is available yet.</p>
+        )}
+      </div>
+
+      <div className="rounded-md border border-zinc-200 p-4 dark:border-zinc-800">
         <div className="mb-3 flex items-center gap-2">
           <FileSearch className="h-4 w-4 text-zinc-400" />
           <h3 className="text-sm font-medium text-zinc-900 dark:text-zinc-100">Graph Search</h3>
@@ -250,6 +408,90 @@ export function GraphExplorationPanel({ session, initialQuery = '' }: GraphExplo
             )}
           </div>
         ) : null}
+      </div>
+
+      <div className="rounded-md border border-zinc-200 p-4 dark:border-zinc-800">
+        <div className="mb-3 flex flex-wrap items-center justify-between gap-3">
+          <div className="flex items-start gap-2">
+            <Scissors className="mt-0.5 h-4 w-4 text-zinc-400" />
+            <div>
+              <h3 className="text-sm font-medium text-zinc-900 dark:text-zinc-100">Bounded review context</h3>
+              <p className="text-sm text-zinc-500 dark:text-zinc-400">
+                Fetch small source snippets for graph-guided verification instead of reading whole files.
+              </p>
+            </div>
+          </div>
+          <button
+            type="button"
+            onClick={() => {
+              setReviewContextRequested(true)
+              void liveReviewContext.refetch()
+            }}
+            className="rounded-md border border-zinc-300 px-3 py-1.5 text-sm font-medium text-zinc-700 transition hover:bg-zinc-50 dark:border-zinc-700 dark:text-zinc-200 dark:hover:bg-zinc-800"
+          >
+            Load review context
+          </button>
+        </div>
+        {liveReviewContext.isLoading ? (
+          <p className="text-sm text-zinc-500 dark:text-zinc-400">Loading bounded review snippets…</p>
+        ) : liveReviewContext.isError && !reviewContext ? (
+          <p className="text-sm text-red-600 dark:text-red-400">Failed to load bounded review context.</p>
+        ) : reviewContext ? (
+          <div className="space-y-4">
+            <div className="flex flex-wrap items-center gap-2 text-sm">
+              <StatusPill status={reviewContext.status} />
+              <span className="text-zinc-600 dark:text-zinc-300">{reviewContext.summary}</span>
+              {reviewContext.budget.truncated && (
+                <span className="rounded-full border border-yellow-500/25 bg-yellow-500/10 px-2 py-0.5 text-xs text-yellow-700 dark:text-yellow-300">
+                  truncated
+                </span>
+              )}
+            </div>
+            <p className="rounded-md border border-blue-500/25 bg-blue-500/10 p-3 text-sm text-blue-800 dark:text-blue-200">
+              Snippets are investigation helpers only. Findings still need source, diff, test, or runtime evidence.
+            </p>
+            {reviewContext.snippets.length === 0 ? (
+              <p className="text-sm text-zinc-500 dark:text-zinc-400">No snippets returned for this scope.</p>
+            ) : (
+              <div className="space-y-3">
+                {reviewContext.snippets.slice(0, 6).map((snippet) => (
+                  <div key={`${snippet.filePath}:${snippet.lineStart}-${snippet.lineEnd}:${snippet.kind}`} className="rounded-md border border-zinc-200 dark:border-zinc-800">
+                    <div className="border-b border-zinc-200 px-3 py-2 text-sm dark:border-zinc-800">
+                      <div className="font-medium text-zinc-900 dark:text-zinc-100">
+                        {snippet.filePath}:{snippet.lineStart}-{snippet.lineEnd}
+                      </div>
+                      <div className="mt-1 text-xs text-zinc-500 dark:text-zinc-400">
+                        {snippet.kind.replaceAll('_', ' ')} · {snippet.qualifiedNames.join(', ')}
+                      </div>
+                      <div className="mt-1 text-xs text-zinc-500 dark:text-zinc-400">{snippet.reason}</div>
+                    </div>
+                    <pre className="max-h-64 overflow-auto bg-zinc-50 p-3 text-xs text-zinc-800 dark:bg-zinc-950 dark:text-zinc-200">
+                      {snippet.text}
+                    </pre>
+                  </div>
+                ))}
+              </div>
+            )}
+            {reviewContext.omittedFiles.length > 0 && (
+              <div>
+                <SectionTitle>Omitted files</SectionTitle>
+                <BulletList
+                  items={reviewContext.omittedFiles.map((file) => `${file.filePath} — ${file.reason}`)}
+                  empty="No omitted files."
+                />
+              </div>
+            )}
+            {reviewContext.warnings.length > 0 && (
+              <div className="rounded-md border border-yellow-500/25 bg-yellow-500/10 p-3 text-sm text-yellow-800 dark:text-yellow-200">
+                <BulletList items={reviewContext.warnings} empty="" />
+              </div>
+            )}
+          </div>
+        ) : (
+          <p className="text-sm text-zinc-500 dark:text-zinc-400">
+            Click Load review context when a graph suggestion needs source verification.
+          </p>
+        )}
       </div>
 
       <div className="rounded-md border border-zinc-200 p-4 dark:border-zinc-800">

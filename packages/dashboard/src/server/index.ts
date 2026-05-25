@@ -363,7 +363,7 @@ export async function startServer(options: StartServerOptions = {}): Promise<voi
   app.use('/api/sessions', createReviewsRouter(db))
   app.use('/api/sessions', createMapsRouter(db))
   app.use('/api/sessions', createArtifactsRouter(db))
-  app.use('/api/sessions', createUsageRouter(db))
+  app.use('/api/sessions', createUsageRouter(db, ocrDir))
   app.use('/api', createProgressRouter(db, ocrDir))
   app.use('/api/notes', createNotesRouter(db, ocrDir))
   app.use('/api/stats', createStatsRouter(db))

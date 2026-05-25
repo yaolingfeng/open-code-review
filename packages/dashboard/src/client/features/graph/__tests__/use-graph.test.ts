@@ -17,8 +17,12 @@ vi.mock('../../../lib/utils', () => ({
 
 import {
   useGraphContextArtifact,
+  useGraphMinimalContext,
+  useGraphMinimalContextArtifact,
   useGraphReviewAnalysis,
   useGraphReviewAnalysisArtifact,
+  useGraphReviewContext,
+  useGraphReviewContextArtifact,
   useGraphSearch,
   useGraphStatus,
 } from '../use-graph'
@@ -158,6 +162,81 @@ describe('use-graph hook contracts', () => {
     })
   })
 
+  it('configures minimal context and review context requests', async () => {
+    const minimal = useGraphMinimalContext({
+      workflow: 'review',
+      changedFiles: ['src/auth.ts'],
+      maxSuggestions: 3,
+      enabled: true,
+    }) as {
+      queryKey: unknown[]
+      queryFn: (context: { signal?: AbortSignal }) => Promise<unknown>
+      enabled: boolean
+    }
+
+    expect(minimal.queryKey).toEqual([
+      'graph',
+      'minimal-context',
+      'review',
+      ['src/auth.ts'],
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      3,
+    ])
+    expect(minimal.enabled).toBe(true)
+    await minimal.queryFn({})
+    expect(fetchApiMock).toHaveBeenCalledWith('/api/graph/minimal-context', expect.objectContaining({
+      method: 'POST',
+      body: JSON.stringify({
+        workflow: 'review',
+        changedFiles: ['src/auth.ts'],
+        maxSuggestions: 3,
+      }),
+    }))
+
+    const reviewContext = useGraphReviewContext({
+      workflow: 'review',
+      changedFiles: ['src/auth.ts'],
+      maxSnippets: 8,
+      maxLinesPerSnippet: 40,
+      enabled: false,
+    }) as {
+      queryKey: unknown[]
+      queryFn: (context: { signal?: AbortSignal }) => Promise<unknown>
+      enabled: boolean
+    }
+
+    expect(reviewContext.queryKey).toEqual([
+      'graph',
+      'review-context',
+      'review',
+      ['src/auth.ts'],
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      8,
+      40,
+      undefined,
+      undefined,
+    ])
+    expect(reviewContext.enabled).toBe(false)
+    await reviewContext.queryFn({})
+    expect(fetchApiMock).toHaveBeenCalledWith('/api/graph/review-context', expect.objectContaining({
+      method: 'POST',
+      body: JSON.stringify({
+        workflow: 'review',
+        changedFiles: ['src/auth.ts'],
+        maxSnippets: 8,
+        maxLinesPerSnippet: 40,
+      }),
+    }))
+  })
+
   it('enables artifact queries only when a session id exists', async () => {
     const reviewArtifactOptions = useGraphReviewAnalysisArtifact('session-1') as {
       queryKey: unknown[]
@@ -184,5 +263,25 @@ describe('use-graph hook contracts', () => {
 
     contextArtifactOptions.queryFn()
     expect(fetchApiMock).toHaveBeenCalledWith('/api/sessions//artifacts/graph-context')
+
+    const minimalArtifactOptions = useGraphMinimalContextArtifact('session-1') as {
+      queryKey: unknown[]
+      queryFn: () => Promise<unknown>
+      enabled: boolean
+      retry: boolean
+    }
+    expect(minimalArtifactOptions.queryKey).toEqual(['sessions', 'session-1', 'artifacts', 'graph-minimal-context'])
+    minimalArtifactOptions.queryFn()
+    expect(fetchApiMock).toHaveBeenCalledWith('/api/sessions/session-1/artifacts/graph-minimal-context')
+
+    const reviewContextArtifactOptions = useGraphReviewContextArtifact('session-1') as {
+      queryKey: unknown[]
+      queryFn: () => Promise<unknown>
+      enabled: boolean
+      retry: boolean
+    }
+    expect(reviewContextArtifactOptions.queryKey).toEqual(['sessions', 'session-1', 'artifacts', 'graph-review-context'])
+    reviewContextArtifactOptions.queryFn()
+    expect(fetchApiMock).toHaveBeenCalledWith('/api/sessions/session-1/artifacts/graph-review-context')
   })
 })

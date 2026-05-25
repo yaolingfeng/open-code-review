@@ -169,6 +169,7 @@ export type GraphQueryResult = {
   files?: string[];
   warnings: string[];
   truncated: boolean;
+  nextToolSuggestions?: GraphNextToolSuggestion[];
 };
 
 export type GraphFlow = {
@@ -287,6 +288,7 @@ export type GraphSearchResult = {
   results: GraphSearchResultItem[];
   warnings: string[];
   truncated: boolean;
+  nextToolSuggestions?: GraphNextToolSuggestion[];
 };
 
 export type GraphSearchOptions = GraphOptions & {
@@ -360,6 +362,7 @@ export type GraphReviewAnalysis = {
   drilldown: GraphReviewAnalysisDrilldown;
   warnings: string[];
   truncated: boolean;
+  nextToolSuggestions?: GraphNextToolSuggestion[];
   generatedAt: string;
   sourceScope: {
     workflow: GraphWorkflow;
@@ -530,6 +533,90 @@ export type GraphContext = {
   structuredWarnings: GraphContextWarning[];
 };
 
+export type GraphNextToolSuggestion = {
+  command: string;
+  reason: string;
+  expectedValue: string;
+  evidenceRequirement: string;
+  priority: "high" | "medium" | "low";
+};
+
+export type GraphOutputBudget = {
+  maxPriorities: number;
+  maxWarnings: number;
+  maxSuggestions: number;
+  truncated: boolean;
+};
+
+export type GraphMinimalContext = {
+  version: 1;
+  workflow: GraphWorkflow;
+  status: GraphExplorationStatus;
+  summary: string;
+  risk: {
+    level: "low" | "medium" | "high" | "unknown";
+    score: number;
+  };
+  counts: {
+    changedFiles: number;
+    changedSymbols: number;
+    impactedFiles: number;
+    testGaps: number;
+  };
+  topPriorities: GraphPriority[];
+  warnings: string[];
+  nextToolSuggestions: GraphNextToolSuggestion[];
+  budget: GraphOutputBudget;
+  generatedAt: string;
+  sourceScope: {
+    workflow: GraphWorkflow;
+    changedFileCount: number;
+    changedSymbolPrecision: GraphChangedSymbolPrecision;
+  };
+};
+
+export type GraphReviewContextSnippetKind = "changed_symbol" | "impacted_symbol";
+
+export type GraphReviewContextSnippet = {
+  filePath: string;
+  lineStart: number;
+  lineEnd: number;
+  qualifiedNames: string[];
+  kind: GraphReviewContextSnippetKind;
+  reason: string;
+  text: string;
+  truncated: boolean;
+};
+
+export type GraphReviewContextOmittedFile = {
+  filePath: string;
+  reason: string;
+};
+
+export type GraphReviewContext = {
+  version: 1;
+  workflow: GraphWorkflow;
+  status: GraphExplorationStatus;
+  summary: string;
+  snippets: GraphReviewContextSnippet[];
+  omittedFiles: GraphReviewContextOmittedFile[];
+  warnings: string[];
+  nextToolSuggestions: GraphNextToolSuggestion[];
+  budget: {
+    maxFiles: number;
+    maxSnippets: number;
+    maxLinesPerSnippet: number;
+    maxChars: number;
+    truncated: boolean;
+  };
+  generatedAt: string;
+  sourceScope: {
+    workflow: GraphWorkflow;
+    changedFileCount: number;
+    changedSymbolPrecision: GraphChangedSymbolPrecision;
+  };
+};
+
 export type GraphOptions = {
   repoRoot: string;
   ocrDir?: string;
@@ -581,4 +668,17 @@ export type GenerateGraphReviewAnalysisOptions = GenerateGraphContextOptions & {
   maxFiles?: number;
   maxHints?: number;
   maxModules?: number;
+};
+
+export type GenerateGraphMinimalContextOptions = GenerateGraphReviewAnalysisOptions & {
+  maxPriorities?: number;
+  maxWarnings?: number;
+  maxSuggestions?: number;
+};
+
+export type GenerateGraphReviewContextOptions = GenerateGraphReviewAnalysisOptions & {
+  maxSnippets?: number;
+  maxLinesPerSnippet?: number;
+  maxChars?: number;
+  maxSuggestions?: number;
 };

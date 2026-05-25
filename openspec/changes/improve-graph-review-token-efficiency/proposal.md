@@ -1,4 +1,4 @@
-# Change: Improve Graph Review Token Efficiency
+# Change: Make Graph the Default Review Navigation Layer
 
 ## Why
 
@@ -7,48 +7,82 @@ OCR 已经通过 `add-graph-review-exploration` 建立了可用的图谱探索�
 radius、reviewer hints、Dashboard exploration，以及 review 阶段 read-only 的性能
 保护。
 
-但当前图谱能力距离 `code-review-graph` 的核心产品收益还差最后一段：图谱已经
-“能被看到”，但还没有系统性地把 reviewer 从盲目 `Read/Grep/Bash` 中解放出来。
-如果默认注入仍偏长、reviewer 仍要整文件阅读、graph query 结果缺少下一步建议、
-并且没有 token A/B 评测闭环，那么图谱很容易变成额外上下文，而不是稳定减少
-token 的工作流能力。
+但当前图谱能力还没有稳定转化成 OCR 的核心产品收益。问题不在于 graph
+“不够强”，而在于 graph 还没有成为 review workflow 的默认导航层：默认注入仍然
+偏长，reviewer 仍然容易回到无方向的 `Read/Grep/Bash`，而系统也缺少足够直接的
+对比手段来证明 graph 是否真的减少了 token 和盲搜。
 
-本变更聚焦三个产品收益：
+本变更只聚焦一个核心目标：
 
-- **更少 token**：默认只注入极短 graph summary，把详细图谱、源码片段和 drilldown
-  改为按需获取。
-- **更少盲搜**：用 graph-native next step suggestions 和 bounded review context
-  替代无方向的 `Read/Grep/Bash` 探索。
-- **更稳定的 review 质量**：通过 source-grounded snippets、质量门控和 usage compare
-  确保 token 降低不是因为 review 变浅。
+- **让 graph 从“可查看的 artifact”变成“review 的默认入口与导航层”**
+
+围绕这个目标，首发只验证三个产品收益：
+
+- **更少 token**：默认只注入极短、可行动的 graph summary，而不是完整 graph
+  artifact。
+- **更少盲搜**：reviewer 优先沿着 graph 给出的下一步建议探索，而不是先做 broad
+  source reads。
+- **更稳定的 review 质量**：graph 负责缩小调查范围，但 finding 仍必须回到源码、
+  diff、测试或运行证据。
 
 ## What Changes
 
-- **新增 minimal graph context**：提供 `ocr graph minimal-context` 与对应 shared API，
-  输出 100-300 token 级别的 summary、top priorities、test gap count、warnings 和
-  recommended next graph queries。review workflow 默认优先注入该摘要，而不是完整
-  `graph-context.md` 或完整 `graph-review-analysis`。
-- **新增 bounded graph review context**：提供 `ocr graph review-context`，从 changed
-  symbols、high-priority impacted symbols、test gaps 和 affected flows 中提取小范围
-  源码片段，替代 reviewer 整文件读取。输出必须带 line ranges、source grounding、
-  truncation markers 和 token/line budget。
-- **新增 next tool suggestions**：为 graph search、query、impact、minimal-context、
-  review-analysis、review-context 输出结构化 `nextToolSuggestions`，明确建议的下一步
-  graph query 或源码验证动作，减少 reviewer 自行猜测探索路径。
+### P0: 首发范围（必须）
+
+- **新增 minimal graph context**：提供 `ocr graph minimal-context` 与 shared API，
+  输出短小且可行动的 summary、top priorities、key warnings 和 next tool
+  suggestions。review workflow 默认优先注入该摘要，而不是完整 `graph-context.md`
+  或完整 `graph-review-analysis`。
+- **新增结构化 next tool suggestions**：为 minimal-context、search、query、impact
+  和 review-analysis 输出少量、确定性、去重后的下一步建议，优先把 reviewer 引导到
+  bounded graph query 或按需源码验证，而不是整文件读取。
 - **收缩 workflow 默认注入策略**：Tech Lead 和 reviewer 默认只收到 minimal graph
-  context + 少量 top hints；完整 `graph-context`、完整 analysis drilldown 和源码片段
-  只能按需读取或通过明确命令获取。
-- **新增 token efficiency measurement**：提供 `ocr usage compare`，用于比较 baseline
-  session 和 graph-enabled session 的 token、cost、row_count 和分项变化；新增文档化
-  benchmark 流程，支持多轮中位数比较。
-- **新增 graph review quality guardrails**：定义 token 降低的验收条件：不得降低 blocker /
-  should-fix 发现质量；graph findings 仍必须引用源码、diff、测试或运行证据；graph-only
-  signal 只能作为调查线索。
-- **新增 exploration telemetry**：从 event JSONL 中汇总 reviewer 的 `Read/Grep/Bash`、
-  `ocr graph query/search/impact/review-context` 等工具调用数，为“少盲搜”提供可观测
-  指标。
-- **新增 token budget tests 与 fixtures**：为 minimal-context、review-context 和
-  nextToolSuggestions 增加稳定输出、预算上限、truncation 和 degraded graph 状态测试。
+  context + top hints；完整 graph artifacts 继续保留，但只作为按需参考或 drill-down
+  入口。
+- **新增 usage compare 最小闭环**：提供 `ocr usage compare`，比较 baseline session
+  与 graph-enabled session 的 token、cost、row_count，以及基础的 `Read/Grep/Bash` 与
+  `ocr graph *` 调用差异，用于验证 graph 是否真正减少了 broad exploration。
+- **新增 quality guardrails**：graph 输出只能作为调查线索；任何 finding 仍必须引用
+  源码、diff、测试或运行证据。token 降低不能以 review 变浅为代价。
+
+### P1: 首发后的增强（应该）
+
+- **新增 bounded graph review context**：提供 `ocr graph review-context`，先聚焦
+  changed symbols 和 top impacted symbols 的小范围源码片段提取，作为按需证据收集
+  工具，而不是默认注入内容。
+- **增强 exploration telemetry**：在 usage compare 中补充更完整的 broad exploration
+  与 graph-guided exploration 指标，在 P0 基础调用计数之外提供更丰富的调查路径信号，
+  帮助判断 reviewer 是否真的改变了调查路径。
+- **增强 dashboard 展示**：Dashboard 展示 minimal context、next suggestions 和 usage
+  comparison artifact，但不阻塞 P0 落地。
+
+### 明确不在首发范围内
+
+- semantic/vector search
+- multi-repo registry
+- MCP server
+- dead-code / refactor apply
+- wiki generation
+- 复杂大图可视化
+- 追平 `code-review-graph` 全部平台能力
+- 把 `review-context` 一次性扩展到所有 flow / test-gap / 大规模 snippet merge 场景
+
+## Product Acceptance Criteria
+
+本变更的成功标准不是“新增了更多 graph 功能”，而是 graph 是否真正改变了 OCR 的
+review 默认路径。
+
+P0 验收时应至少满足：
+
+- **默认注入收缩**：review workflow 默认不再注入完整 graph artifacts，而是注入
+  bounded minimal graph context。
+- **探索行为改善**：在同 diff、同 model、同 reviewer team 的比较下，graph-enabled
+  workflow 的 `Read/Grep/Bash` broad exploration 中位数下降，或更早被 graph-guided
+  exploration 替代。
+- **token 成本改善**：graph-enabled workflow 的 total token、cost 或等价成本指标出现
+  可解释的改善；若 input tokens 上升，也必须由更少的盲搜或更低的 total tokens 抵消。
+- **质量不下降**：blocker / should-fix 发现质量不下降；findings 继续保持源码、diff、
+  测试或运行证据引用。
 
 ## Impact
 
@@ -64,12 +98,11 @@ token 的工作流能力。
   - `packages/agents/skills/ocr/references/*`
 - **Breaking changes**: 无。现有 `graph-context.md/json` 与 `graph-review-analysis.json`
   继续可用；本变更只改变默认注入偏好和新增更小的上下文入口。
-- **Performance guardrails**: minimal-context 和 review-context 必须 bounded，
-  不得触发 graph update/build、full search-index rebuild、full flow rebuild 或昂贵
-  module summary 计算。源码片段提取必须受文件数、行数、字符数或 token 预算限制。
+- **Performance guardrails**: minimal-context、next suggestions 和首发版
+  review-context 必须 bounded，不得触发 graph update/build、full search-index rebuild、
+  full flow rebuild 或昂贵 module summary 计算。
 - **Token budget guardrails**: workflow 默认注入内容必须可控；完整 graph artifacts 只能
-  作为 artifact 或按需 drilldown，不得默认塞入 reviewer prompt。
+  作为 artifact 或按需 drill-down，不得默认塞入 reviewer prompt。
 - **Quality guardrails**: token 降低必须与 review 质量一起衡量；任何 graph-derived
   finding 都必须经过源码、diff、测试或运行证据验证。
-- **Out of scope**: semantic/vector search、multi-repo registry、MCP server、dead-code /
-  refactor apply、wiki generation、复杂大图可视化、追平 `code-review-graph` 全部平台能力。
+

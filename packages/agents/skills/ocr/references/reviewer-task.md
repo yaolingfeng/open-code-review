@@ -25,13 +25,13 @@ When spawning a reviewer task, provide the following context:
 
 {tech lead analysis including requirements assessment and focus points}
 
-## Graph Review Analysis (if present)
+## Minimal Graph Context (if present)
 
-{summary-first content of graph-review-analysis.json - summary, priorities, suggested review order, key hints, module or architecture summaries, warnings}
+{content of graph-minimal-context.json - summary, risk, counts, top priorities, key warnings, nextToolSuggestions}
 
-## Graph Context (if present)
+## Graph Drill-Down Artifacts (if needed)
 
-{content of graph-context.md - changed symbols, changed ranges, impact radius, test gaps, unsupported changed files, warnings}
+{concise excerpts from graph-review-analysis.json or graph-context.md only when they materially affect routing; do not paste full graph artifacts by default}
 
 ## Code to Review
 
@@ -46,20 +46,21 @@ Review the code from your persona's perspective. You have **full agency** to exp
 ### Agency Guidelines
 
 You are NOT limited to the diff. You SHOULD:
-- Read full files to understand context
+- Start from minimal graph context and `nextToolSuggestions` when present
 - Trace upstream dependencies (what calls this code?)
 - Trace downstream dependencies (what does this code call?)
 - Examine related tests
 - Check configuration and environment setup
 - Read documentation if relevant
-- Use `ocr graph query ...` for follow-up graph lookups when graph context is available
-- Use `ocr graph review-analysis --json ...` or session artifacts for deeper graph drilldown when graph review analysis is available
+- Use `ocr graph review-context ...`, `ocr graph query ...`, `ocr graph search ...`, or `ocr graph impact ...` for bounded follow-up when graph context is available
+- Treat `ocr graph review-context` snippets as investigation helpers, not as the sole evidence for a finding
+- Read full files only after graph output is insufficient, stale, missing, unsupported, or when source verification is required
 - Use your professional judgment to decide what's relevant
 
 Your persona guides your focus area but does NOT restrict your exploration.
 
-Graph review analysis and graph context are advisory. You may use them to prioritize exploration, but every finding must be verified against source code, diff, tests, runtime behavior, or documented requirements before reporting it.
-Prefer starting from summary-first priorities, review order, and hints when graph review analysis is present.
+Graph outputs are advisory. You may use them to prioritize exploration, but every finding must be verified against source code, diff, tests, runtime behavior, or documented requirements before reporting it.
+Prefer starting from minimal graph context, top priorities, and next tool suggestions when present.
 Prefer starting from changed symbols when they are present; use changed files as the completeness boundary and fallback scope.
 
 ### Output Format

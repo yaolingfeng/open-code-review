@@ -6,7 +6,9 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   buildGraph,
   generateGraphContext,
+  generateGraphMinimalContext,
   generateGraphReviewAnalysis,
+  generateGraphReviewContext,
   getGraphStatus,
   getImpactRadius,
   isGraphReviewAnalysis,
@@ -1307,6 +1309,150 @@ describe("graph engine", () => {
     expect(analysis.summary).toContain("graph database is missing");
     expect(analysis.changedSymbols).toEqual([]);
     expect(analysis.warnings).toContain("Graph database missing. Run `ocr graph build --full` to enable graph review analysis.");
+    expect(analysis.nextToolSuggestions?.[0]?.command).toBe("ocr graph build --full");
+  });
+
+  it("generates bounded minimal graph context with next tool suggestions", async () => {
+    const repoRoot = makeRepo();
+    write(repoRoot, "src/api/user.ts", [
+      "import { getUser } from '../service/user'",
+      "",
+      "export function userHandler(id: string) {",
+      "  return getUser(id)",
+      "}",
+    ].join("\n"));
+    write(repoRoot, "src/service/user.ts", [
+      "export function getUser(id: string) {",
+      "  return { id }",
+      "}",
+    ].join("\n"));
+
+    await buildGraph({ repoRoot, mode: "full" });
+
+    const context = await generateGraphMinimalContext({
+      repoRoot,
+      workflow: "review",
+      changedFiles: ["src/api/user.ts"],
+      maxPriorities: 1,
+      maxWarnings: 2,
+      maxSuggestions: 2,
+      writeArtifacts: false,
+    });
+
+    expect(context.version).toBe(1);
+    expect(context.status).toBe("ready");
+    expect(context.counts.changedFiles).toBe(1);
+    expect(context.counts.changedSymbols).toBeGreaterThan(0);
+    expect(context.topPriorities.length).toBeLessThanOrEqual(1);
+    expect(context.nextToolSuggestions.length).toBeLessThanOrEqual(2);
+    expect(context.nextToolSuggestions[0]?.command).toContain("ocr graph query");
+    expect(context.nextToolSuggestions[0]?.evidenceRequirement).toContain("source");
+    expect(context.budget.maxPriorities).toBe(1);
+  });
+
+  it("generates missing minimal graph context without building the graph", async () => {
+    const repoRoot = makeRepo();
+    write(repoRoot, "src/service.ts", "export function run() { return true }\n");
+
+    const context = await generateGraphMinimalContext({
+      repoRoot,
+      workflow: "review",
+      changedFiles: ["src/service.ts"],
+      writeArtifacts: false,
+    });
+
+    expect(context.status).toBe("missing");
+    expect(context.risk.level).toBe("unknown");
+    expect(context.counts.changedFiles).toBe(1);
+    expect(context.counts.changedSymbols).toBe(0);
+    expect(context.nextToolSuggestions[0]?.command).toBe("ocr graph build --full");
+  });
+
+  it("generates bounded graph review context snippets", async () => {
+    const repoRoot = makeRepo();
+    write(repoRoot, "src/api/user.ts", [
+      "import { getUser } from '../service/user'",
+      "",
+      "export function userHandler(id: string) {",
+      "  return getUser(id)",
+      "}",
+    ].join("\n"));
+    write(repoRoot, "src/service/user.ts", [
+      "export function getUser(id: string) {",
+      "  return { id }",
+      "}",
+    ].join("\n"));
+
+    await buildGraph({ repoRoot, mode: "full" });
+
+    const context = await generateGraphReviewContext({
+      repoRoot,
+      workflow: "review",
+      changedFiles: ["src/api/user.ts"],
+      maxFiles: 2,
+      maxSnippets: 4,
+      maxLinesPerSnippet: 2,
+      maxChars: 2000,
+      writeArtifacts: false,
+    });
+
+    expect(context.status).toBe("ready");
+    expect(context.snippets.length).toBeGreaterThan(0);
+    expect(context.snippets.length).toBeLessThanOrEqual(4);
+    expect(context.snippets[0]?.filePath).toBe("src/api/user.ts");
+    expect(context.snippets[0]?.text.split("\n").length).toBeLessThanOrEqual(2);
+    expect(context.snippets.some((snippet) => snippet.kind === "changed_symbol")).toBe(true);
+    expect(context.nextToolSuggestions.some((suggestion) => suggestion.command.includes("ocr graph review-context"))).toBe(true);
+  });
+
+  it("handles missing graph review context without throwing", async () => {
+    const repoRoot = makeRepo();
+    write(repoRoot, "src/service.ts", "export function run() { return true }\n");
+
+    const context = await generateGraphReviewContext({
+      repoRoot,
+      workflow: "review",
+      changedFiles: ["src/service.ts"],
+      writeArtifacts: false,
+    });
+
+    expect(context.status).toBe("missing");
+    expect(context.snippets).toEqual([]);
+    expect(context.warnings).toContain("Graph database missing. Run `ocr graph build --full` to enable graph review analysis.");
+    expect(context.nextToolSuggestions[0]?.command).toBe("ocr graph build --full");
+  });
+
+  it("omits unsupported files and marks review context budget truncation", async () => {
+    const repoRoot = makeRepo();
+    write(repoRoot, "src/api/user.ts", [
+      "import { getUser } from '../service/user'",
+      "export function userHandler(id: string) {",
+      "  return getUser(id)",
+      "}",
+    ].join("\n"));
+    write(repoRoot, "src/service/user.ts", [
+      "export function getUser(id: string) {",
+      "  return { id }",
+      "}",
+    ].join("\n"));
+    write(repoRoot, "README.md", "# docs\n");
+
+    await buildGraph({ repoRoot, mode: "full" });
+
+    const context = await generateGraphReviewContext({
+      repoRoot,
+      workflow: "review",
+      changedFiles: ["src/api/user.ts", "README.md"],
+      maxFiles: 1,
+      maxSnippets: 1,
+      maxLinesPerSnippet: 1,
+      maxChars: 30,
+      writeArtifacts: false,
+    });
+
+    expect(context.omittedFiles.some((file) => file.filePath === "README.md")).toBe(true);
+    expect(context.budget.truncated).toBe(true);
+    expect(context.warnings.some((warning) => warning.includes("truncated"))).toBe(true);
   });
 
   it("propagates degraded and stale status into graph review analysis", async () => {

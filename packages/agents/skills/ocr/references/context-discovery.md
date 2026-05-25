@@ -152,10 +152,15 @@ Save discovered context to session directory (see `references/session-files.md` 
 .ocr/sessions/{YYYY-MM-DD}-{branch}/discovered-standards.md
 ```
 
-When changed files are known, also generate graph context:
+When changed files are known, generate a bounded minimal graph context for default prompt injection, and optionally write full graph artifacts for on-demand drill-down:
 
 ```bash
 CHANGED_FILES=$(git diff --cached --name-only | paste -sd, -)
+ocr graph minimal-context \
+  --workflow review \
+  --files "$CHANGED_FILES" \
+  --json >"$SESSION_DIR/graph-minimal-context.json"
+
 ocr graph context \
   --workflow review \
   --files "$CHANGED_FILES" \
@@ -163,7 +168,7 @@ ocr graph context \
   --json >/tmp/ocr-graph-context.json
 ```
 
-This creates `graph-context.md` and `graph-context.json`.
+Default reviewer prompts should use `graph-minimal-context.json`: summary, risk, counts, top priorities, key warnings, and `nextToolSuggestions`. Full `graph-context.md/json` remains an artifact for on-demand investigation and should not be injected wholesale when the minimal context is sufficient.
 
 - `changedFiles` remains the canonical git-derived workflow input.
 - When git diff hunks are available, graph context also records `changedRanges` and narrows `changedNodes` to overlapping changed symbols.

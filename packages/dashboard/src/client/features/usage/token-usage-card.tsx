@@ -1,8 +1,10 @@
-import { Coins } from 'lucide-react'
-import type { ReactNode } from 'react'
-import type { TokenUsageSummary } from '../../lib/api-types'
+import { Coins, GitCompareArrows } from 'lucide-react'
+import { useState, type ReactNode } from 'react'
+import type { TokenUsageSummary, UsageComparison, UsageMetricDelta } from '../../lib/api-types'
+import { useUsageComparison } from './use-token-usage'
 
 type TokenUsageCardProps = {
+  workflowId?: string
   summary?: TokenUsageSummary
   isLoading?: boolean
   error?: unknown
@@ -29,6 +31,79 @@ function Metric({ label, value }: { label: string; value: string }) {
   )
 }
 
+function formatDelta(delta: UsageMetricDelta | undefined): string {
+  if (!delta || delta.absolute === null) return 'n/a'
+  const sign = delta.absolute > 0 ? '+' : ''
+  const percent = delta.percent === null ? '' : ` (${sign}${(delta.percent * 100).toFixed(1)}%)`
+  return `${sign}${formatNumber(delta.absolute)}${percent}`
+}
+
+function CompareResult({ comparison }: { comparison: UsageComparison }) {
+  const broadBaseline =
+    comparison.baseline.telemetry.readCalls +
+    comparison.baseline.telemetry.grepCalls +
+    comparison.baseline.telemetry.bashCalls
+  const broadCandidate =
+    comparison.candidate.telemetry.readCalls +
+    comparison.candidate.telemetry.grepCalls +
+    comparison.candidate.telemetry.bashCalls
+  return (
+    <div className="mt-5 rounded-md border border-zinc-200 p-4 dark:border-zinc-800">
+      <div className="mb-3 flex items-center gap-2">
+        <GitCompareArrows className="h-4 w-4 text-zinc-400" />
+        <div>
+          <div className="text-sm font-medium text-zinc-900 dark:text-zinc-100">
+            Usage comparison
+          </div>
+          <div className="text-xs text-zinc-500 dark:text-zinc-400">
+            {comparison.baseline.workflow_id} {'->'} {comparison.candidate.workflow_id}
+          </div>
+        </div>
+      </div>
+      <p className="mb-3 text-sm text-zinc-700 dark:text-zinc-300">
+        {comparison.verdict.summary}
+      </p>
+      <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+        <Metric label="Total delta" value={formatDelta(comparison.delta.total_tokens)} />
+        <Metric label="Input delta" value={formatDelta(comparison.delta.input_tokens)} />
+        <Metric label="Output delta" value={formatDelta(comparison.delta.output_tokens)} />
+        <Metric label="Graph calls" value={formatDelta(comparison.delta.graphCalls)} />
+      </div>
+      <div className="mt-3 grid gap-3 sm:grid-cols-2">
+        <div className="rounded-md border border-zinc-200 p-3 text-sm dark:border-zinc-800">
+          <div className="text-xs uppercase tracking-wide text-zinc-500 dark:text-zinc-400">
+            Broad exploration
+          </div>
+          <div className="mt-1 font-medium text-zinc-900 dark:text-zinc-100">
+            {broadBaseline} {'->'} {broadCandidate} calls
+          </div>
+          <div className="text-xs text-zinc-500 dark:text-zinc-400">
+            Read + Grep + Bash
+          </div>
+        </div>
+        <div className="rounded-md border border-zinc-200 p-3 text-sm dark:border-zinc-800">
+          <div className="text-xs uppercase tracking-wide text-zinc-500 dark:text-zinc-400">
+            Evidence quality
+          </div>
+          <div className="mt-1 font-medium text-zinc-900 dark:text-zinc-100">
+            {comparison.caveats.length === 0 ? 'No caveats' : `${comparison.caveats.length} caveat(s)`}
+          </div>
+          <div className="text-xs text-zinc-500 dark:text-zinc-400">
+            Missing rows or telemetry prevent strong claims.
+          </div>
+        </div>
+      </div>
+      {comparison.caveats.length > 0 && (
+        <ul className="mt-3 space-y-1 text-sm text-yellow-800 dark:text-yellow-200">
+          {comparison.caveats.map((caveat) => (
+            <li key={caveat}>- {caveat}</li>
+          ))}
+        </ul>
+      )}
+    </div>
+  )
+}
+
 function TokenUsageShell({ children }: { children: ReactNode }) {
   return (
     <div className="rounded-lg border border-zinc-200 bg-white p-6 dark:border-zinc-800 dark:bg-zinc-900">
@@ -43,7 +118,9 @@ function TokenUsageShell({ children }: { children: ReactNode }) {
   )
 }
 
-export function TokenUsageCard({ summary, isLoading, error }: TokenUsageCardProps) {
+export function TokenUsageCard({ workflowId = '', summary, isLoading, error }: TokenUsageCardProps) {
+  const [baselineId, setBaselineId] = useState('')
+  const comparison = useUsageComparison(workflowId, baselineId)
   if (isLoading) {
     return (
       <TokenUsageShell>
@@ -141,6 +218,39 @@ export function TokenUsageCard({ summary, isLoading, error }: TokenUsageCardProp
           </div>
         </div>
       )}
+
+      <div className="mt-5 rounded-md border border-zinc-200 p-4 dark:border-zinc-800">
+        <div className="mb-3 flex items-center gap-2">
+          <GitCompareArrows className="h-4 w-4 text-zinc-400" />
+          <div>
+            <div className="text-sm font-medium text-zinc-900 dark:text-zinc-100">
+              Compare against baseline
+            </div>
+            <div className="text-xs text-zinc-500 dark:text-zinc-400">
+              Enter a baseline workflow id to verify token and exploration changes.
+            </div>
+          </div>
+        </div>
+        <input
+          value={baselineId}
+          onChange={(event) => setBaselineId(event.target.value)}
+          placeholder="baseline workflow id"
+          className="w-full rounded-md border border-zinc-300 bg-white px-3 py-2 text-sm text-zinc-900 outline-none transition focus:border-zinc-500 dark:border-zinc-700 dark:bg-zinc-950 dark:text-zinc-100 dark:focus:border-zinc-500"
+        />
+        {baselineId.trim().length === 0 ? (
+          <p className="mt-3 text-sm text-zinc-500 dark:text-zinc-400">
+            No comparison loaded. This avoids guessing a baseline and overstating token savings.
+          </p>
+        ) : comparison.isLoading ? (
+          <p className="mt-3 text-sm text-zinc-500 dark:text-zinc-400">Loading usage comparison...</p>
+        ) : comparison.isError ? (
+          <p className="mt-3 text-sm text-red-600 dark:text-red-400">
+            Failed to compare usage. Check that the baseline workflow exists.
+          </p>
+        ) : comparison.data ? (
+          <CompareResult comparison={comparison.data} />
+        ) : null}
+      </div>
     </div>
   )
 }

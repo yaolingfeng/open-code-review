@@ -93,6 +93,40 @@ describe('createGraphRouter', () => {
     expect(body.warnings).toContain('Graph database missing.')
   })
 
+  it('returns missing minimal context without a database', async () => {
+    const response = await fetch(`${baseUrl}/api/graph/minimal-context`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        workflow: 'review',
+        changedFiles: ['src/auth.ts'],
+      }),
+    })
+
+    expect(response.status).toBe(200)
+    const body = await response.json() as { status: string; counts: { changedFiles: number }; nextToolSuggestions: Array<{ command: string }> }
+    expect(body.status).toBe('missing')
+    expect(body.counts.changedFiles).toBe(1)
+    expect(body.nextToolSuggestions[0]?.command).toBe('ocr graph build --full')
+  })
+
+  it('returns missing review context without a database', async () => {
+    const response = await fetch(`${baseUrl}/api/graph/review-context`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        workflow: 'review',
+        changedFiles: ['src/auth.ts'],
+      }),
+    })
+
+    expect(response.status).toBe(200)
+    const body = await response.json() as { status: string; snippets: unknown[]; nextToolSuggestions: Array<{ command: string }> }
+    expect(body.status).toBe('missing')
+    expect(body.snippets).toEqual([])
+    expect(body.nextToolSuggestions[0]?.command).toBe('ocr graph build --full')
+  })
+
 
   it('returns a non-blocking missing result for impact-radius graph queries without a database', async () => {
     const response = await fetch(`${baseUrl}/api/graph/query`, {
@@ -152,6 +186,24 @@ describe('createGraphRouter', () => {
     const body = await response.json() as { error: string; expected: string }
     expect(body.error).toBe('Invalid graph review analysis body')
     expect(body.expected).toBe('{ workflow: "review" | "map", ... }')
+  })
+
+  it('rejects invalid minimal-context and review-context workflow payloads with 400 responses', async () => {
+    const minimal = await fetch(`${baseUrl}/api/graph/minimal-context`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ workflow: 'invalid-workflow' }),
+    })
+    expect(minimal.status).toBe(400)
+    expect(await minimal.json()).toMatchObject({ error: 'Invalid graph minimal context body' })
+
+    const reviewContext = await fetch(`${baseUrl}/api/graph/review-context`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ workflow: 'invalid-workflow' }),
+    })
+    expect(reviewContext.status).toBe(400)
+    expect(await reviewContext.json()).toMatchObject({ error: 'Invalid graph review context body' })
   })
 
   it('returns missing map graph review analysis without a database', async () => {

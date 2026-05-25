@@ -3,7 +3,9 @@ import chalk from "chalk";
 import {
   buildGraph,
   generateGraphContext,
+  generateGraphMinimalContext,
   generateGraphReviewAnalysis,
+  generateGraphReviewContext,
   getGraphStatus,
   getImpactRadius,
   queryGraph,
@@ -12,11 +14,14 @@ import {
   updateGraph,
   type GraphContext,
   type GraphBuildProgress,
+  type GraphMinimalContext,
+  type GraphNextToolSuggestion,
   type GraphQuery,
   type GraphQueryPattern,
   type GraphQueryResult,
   type GraphPostprocessLevel,
   type GraphReviewAnalysis,
+  type GraphReviewContext,
   type GraphSearchResult,
   type GraphStatus,
   type GraphWorkflow,
@@ -213,12 +218,7 @@ function printQueryResult(result: GraphQueryResult): void {
   if (result.truncated) {
     console.log(chalk.yellow("Result truncated; increase --limit or --depth if needed."));
   }
-  if (result.postprocessWarnings && result.postprocessWarnings.length > 0) {
-    console.log();
-    for (const warning of result.postprocessWarnings) {
-      console.log(`${chalk.yellow("Warning:")} ${warning}`);
-    }
-  }
+  printNextToolSuggestions(result.nextToolSuggestions);
 }
 
 function printContext(context: GraphContext): void {
@@ -248,6 +248,40 @@ function printSearchResult(result: GraphSearchResult): void {
   if (result.truncated) {
     console.log(chalk.yellow("Result truncated; increase --limit if needed."));
   }
+  printNextToolSuggestions(result.nextToolSuggestions);
+}
+
+function printMinimalContext(context: GraphMinimalContext): void {
+  console.log(`${chalk.bold("Status:")} ${context.status}`);
+  console.log(context.summary);
+  console.log(
+    `${chalk.bold("Risk:")} ${context.risk.level} (${context.risk.score.toFixed(2)})`,
+  );
+  console.log(
+    `${chalk.bold("Counts:")} ${context.counts.changedFiles} changed file(s), ` +
+      `${context.counts.changedSymbols} changed symbol(s), ` +
+      `${context.counts.impactedFiles} impacted file(s), ` +
+      `${context.counts.testGaps} test gap(s)`,
+  );
+
+  if (context.topPriorities.length > 0) {
+    console.log();
+    console.log(chalk.bold("Top priorities"));
+    for (const priority of context.topPriorities) {
+      console.log(`- ${priority.qualifiedName} (${priority.filePath}, score ${priority.score}): ${priority.reason}`);
+    }
+  }
+
+  if (context.warnings.length > 0) {
+    console.log();
+    for (const warning of context.warnings) {
+      console.log(`${chalk.yellow("Warning:")} ${warning}`);
+    }
+  }
+  if (context.budget.truncated) {
+    console.log(chalk.yellow("Minimal context truncated by budget; use graph suggestions for bounded drill-down."));
+  }
+  printNextToolSuggestions(context.nextToolSuggestions);
 }
 
 function printReviewAnalysis(result: GraphReviewAnalysis): void {
@@ -298,6 +332,60 @@ function printReviewAnalysis(result: GraphReviewAnalysis): void {
   }
   if (result.truncated) {
     console.log(chalk.yellow("Result truncated; tighten scope or raise max result limits if needed."));
+  }
+  printNextToolSuggestions(result.nextToolSuggestions);
+}
+
+function printReviewContext(result: GraphReviewContext): void {
+  console.log(`${chalk.bold("Status:")} ${result.status}`);
+  console.log(result.summary);
+  console.log(chalk.yellow("Graph snippets are investigation context; verify findings against source, diff, tests, or runtime evidence."));
+
+  if (result.snippets.length > 0) {
+    console.log();
+    console.log(chalk.bold("Snippets"));
+    for (const snippet of result.snippets) {
+      console.log(`- [${snippet.kind}] ${snippet.filePath}:${snippet.lineStart}-${snippet.lineEnd}`);
+      console.log(`  Symbols: ${snippet.qualifiedNames.join(", ")}`);
+      console.log(`  Reason: ${snippet.reason}`);
+      if (snippet.truncated) console.log(chalk.yellow("  Truncated by max-lines-per-snippet."));
+      console.log("  ```");
+      for (const line of snippet.text.split("\n")) {
+        console.log(`  ${line}`);
+      }
+      console.log("  ```");
+    }
+  }
+
+  if (result.omittedFiles.length > 0) {
+    console.log();
+    console.log(chalk.bold("Omitted files"));
+    for (const omitted of result.omittedFiles) {
+      console.log(`- ${omitted.filePath}: ${omitted.reason}`);
+    }
+  }
+
+  if (result.warnings.length > 0) {
+    console.log();
+    for (const warning of result.warnings) {
+      console.log(`${chalk.yellow("Warning:")} ${warning}`);
+    }
+  }
+  if (result.budget.truncated) {
+    console.log(chalk.yellow("Review context truncated; tighten scope or raise snippet budgets if needed."));
+  }
+  printNextToolSuggestions(result.nextToolSuggestions);
+}
+
+function printNextToolSuggestions(suggestions: GraphNextToolSuggestion[] | undefined): void {
+  if (!suggestions || suggestions.length === 0) return;
+  console.log();
+  console.log(chalk.bold("Next tool suggestions"));
+  for (const suggestion of suggestions) {
+    console.log(`- [${suggestion.priority}] ${suggestion.command}`);
+    console.log(`  Reason: ${suggestion.reason}`);
+    console.log(`  Expected value: ${suggestion.expectedValue}`);
+    console.log(`  Evidence: ${suggestion.evidenceRequirement}`);
   }
 }
 
@@ -520,6 +608,47 @@ const searchCommand = new Command("search")
     }
   });
 
+const minimalContextCommand = new Command("minimal-context")
+  .description("Generate bounded minimal graph context for review or map workflows")
+  .requiredOption("--workflow <workflow>", "Workflow type (review or map)", parseWorkflow)
+  .option("--base <ref>", "Git base ref for changed files")
+  .option("--files <files>", "Comma-separated changed files")
+  .option("--depth <number>", "Impact traversal depth", parseInteger, 2)
+  .option("--max-priorities <number>", "Maximum top priorities", parseInteger, 5)
+  .option("--max-warnings <number>", "Maximum warnings", parseInteger, 5)
+  .option("--max-suggestions <number>", "Maximum next tool suggestions", parseInteger, 4)
+  .option("--json", "Print JSON output")
+  .action(
+    async (options: {
+      workflow: GraphWorkflow;
+      base?: string;
+      files?: string;
+      depth: number;
+      maxPriorities: number;
+      maxWarnings: number;
+      maxSuggestions: number;
+      json?: boolean;
+    }) => {
+      try {
+        const context = await generateGraphMinimalContext({
+          repoRoot: repoRoot(),
+          workflow: options.workflow,
+          base: options.base,
+          changedFiles: options.files ? splitFiles(options.files) : undefined,
+          maxDepth: options.depth,
+          maxPriorities: options.maxPriorities,
+          maxWarnings: options.maxWarnings,
+          maxSuggestions: options.maxSuggestions,
+          writeArtifacts: false,
+        });
+        if (options.json) printJson(context);
+        else printMinimalContext(context);
+      } catch (error) {
+        fail(error);
+      }
+    },
+  );
+
 const reviewAnalysisCommand = new Command("review-analysis")
   .description("Generate reviewer-focused graph analysis")
   .requiredOption("--workflow <workflow>", "Workflow type (review or map)", parseWorkflow)
@@ -590,6 +719,53 @@ const reviewAnalysisCommand = new Command("review-analysis")
     },
   );
 
+const reviewContextCommand = new Command("review-context")
+  .description("Generate bounded source snippets for graph-guided review")
+  .requiredOption("--workflow <workflow>", "Workflow type (review or map)", parseWorkflow)
+  .option("--base <ref>", "Git base ref for changed files")
+  .option("--files <files>", "Comma-separated changed files")
+  .option("--depth <number>", "Impact traversal depth", parseInteger, 2)
+  .option("--max-files <number>", "Maximum files with snippets", parseInteger, 6)
+  .option("--max-snippets <number>", "Maximum snippets", parseInteger, 12)
+  .option("--max-lines-per-snippet <number>", "Maximum lines per snippet", parseInteger, 40)
+  .option("--max-chars <number>", "Maximum snippet characters", parseInteger, 16000)
+  .option("--max-suggestions <number>", "Maximum next tool suggestions", parseInteger, 4)
+  .option("--json", "Print JSON output")
+  .action(
+    async (options: {
+      workflow: GraphWorkflow;
+      base?: string;
+      files?: string;
+      depth: number;
+      maxFiles: number;
+      maxSnippets: number;
+      maxLinesPerSnippet: number;
+      maxChars: number;
+      maxSuggestions: number;
+      json?: boolean;
+    }) => {
+      try {
+        const result = await generateGraphReviewContext({
+          repoRoot: repoRoot(),
+          workflow: options.workflow,
+          base: options.base,
+          changedFiles: options.files ? splitFiles(options.files) : undefined,
+          maxDepth: options.depth,
+          maxFiles: options.maxFiles,
+          maxSnippets: options.maxSnippets,
+          maxLinesPerSnippet: options.maxLinesPerSnippet,
+          maxChars: options.maxChars,
+          maxSuggestions: options.maxSuggestions,
+          writeArtifacts: false,
+        });
+        if (options.json) printJson(result);
+        else printReviewContext(result);
+      } catch (error) {
+        fail(error);
+      }
+    },
+  );
+
 export const graphCommand = new Command("graph")
   .description("Build, update, query, and render OCR code graph context")
   .addCommand(statusCommand)
@@ -599,4 +775,6 @@ export const graphCommand = new Command("graph")
   .addCommand(impactCommand)
   .addCommand(contextCommand)
   .addCommand(searchCommand)
-  .addCommand(reviewAnalysisCommand);
+  .addCommand(minimalContextCommand)
+  .addCommand(reviewAnalysisCommand)
+  .addCommand(reviewContextCommand);

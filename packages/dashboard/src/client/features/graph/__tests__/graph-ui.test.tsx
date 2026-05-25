@@ -7,15 +7,23 @@ import { GraphStatusBadge } from '../graph-status-badge'
 const useGraphStatusMock = vi.hoisted(() => vi.fn())
 const useGraphSearchMock = vi.hoisted(() => vi.fn())
 const useGraphReviewAnalysisMock = vi.hoisted(() => vi.fn())
+const useGraphMinimalContextMock = vi.hoisted(() => vi.fn())
+const useGraphReviewContextMock = vi.hoisted(() => vi.fn())
 const useGraphContextArtifactMock = vi.hoisted(() => vi.fn())
+const useGraphMinimalContextArtifactMock = vi.hoisted(() => vi.fn())
 const useGraphReviewAnalysisArtifactMock = vi.hoisted(() => vi.fn())
+const useGraphReviewContextArtifactMock = vi.hoisted(() => vi.fn())
 
 vi.mock('../use-graph', () => ({
   useGraphStatus: useGraphStatusMock,
   useGraphSearch: useGraphSearchMock,
+  useGraphMinimalContext: useGraphMinimalContextMock,
   useGraphReviewAnalysis: useGraphReviewAnalysisMock,
+  useGraphReviewContext: useGraphReviewContextMock,
   useGraphContextArtifact: useGraphContextArtifactMock,
+  useGraphMinimalContextArtifact: useGraphMinimalContextArtifactMock,
   useGraphReviewAnalysisArtifact: useGraphReviewAnalysisArtifactMock,
+  useGraphReviewContextArtifact: useGraphReviewContextArtifactMock,
 }))
 
 describe('graph UI components', () => {
@@ -23,8 +31,12 @@ describe('graph UI components', () => {
     useGraphStatusMock.mockReset()
     useGraphSearchMock.mockReset()
     useGraphReviewAnalysisMock.mockReset()
+    useGraphMinimalContextMock.mockReset()
+    useGraphReviewContextMock.mockReset()
     useGraphContextArtifactMock.mockReset()
+    useGraphMinimalContextArtifactMock.mockReset()
     useGraphReviewAnalysisArtifactMock.mockReset()
+    useGraphReviewContextArtifactMock.mockReset()
 
     useGraphSearchMock.mockReturnValue({
       data: undefined,
@@ -94,6 +106,76 @@ describe('graph UI components', () => {
       isLoading: false,
       isError: false,
     })
+    useGraphMinimalContextMock.mockReturnValue({
+      data: {
+        version: 1,
+        workflow: 'review',
+        status: 'ready',
+        summary: 'Minimal graph context says start with auth.',
+        risk: { level: 'medium', score: 0.42 },
+        counts: { changedFiles: 1, changedSymbols: 1, impactedFiles: 2, testGaps: 1 },
+        topPriorities: [
+          {
+            qualifiedName: 'src/auth.ts::login',
+            filePath: 'src/auth.ts',
+            reason: 'Highest graph priority.',
+            score: 0.9,
+          },
+        ],
+        warnings: [],
+        nextToolSuggestions: [
+          {
+            command: 'ocr graph review-context --workflow review --files src/auth.ts',
+            reason: 'Fetch bounded snippets first.',
+            expectedValue: 'Avoid whole-file reads.',
+            evidenceRequirement: 'Confirm with source.',
+            priority: 'high',
+          },
+        ],
+        budget: { maxPriorities: 5, maxWarnings: 5, maxSuggestions: 5, truncated: false },
+        generatedAt: '2026-01-01T00:00:00.000Z',
+        sourceScope: {
+          workflow: 'review',
+          changedFileCount: 1,
+          changedSymbolPrecision: 'symbol',
+        },
+      },
+      isLoading: false,
+      isError: false,
+    })
+    useGraphReviewContextMock.mockReturnValue({
+      data: {
+        version: 1,
+        workflow: 'review',
+        status: 'ready',
+        summary: 'Graph review context: 1 snippet.',
+        snippets: [
+          {
+            filePath: 'src/auth.ts',
+            lineStart: 10,
+            lineEnd: 12,
+            qualifiedNames: ['src/auth.ts::login'],
+            kind: 'changed_symbol',
+            reason: 'Changed symbol selected for direct source verification.',
+            text: 'export function login() { return true }',
+            truncated: false,
+          },
+        ],
+        omittedFiles: [],
+        warnings: [],
+        nextToolSuggestions: [],
+        budget: { maxFiles: 6, maxSnippets: 8, maxLinesPerSnippet: 40, maxChars: 12000, truncated: false },
+        generatedAt: '2026-01-01T00:00:00.000Z',
+        sourceScope: {
+          workflow: 'review',
+          changedFileCount: 1,
+          changedSymbolPrecision: 'symbol',
+        },
+      },
+      isLoading: false,
+      isError: false,
+      refetch: vi.fn(),
+    })
     useGraphContextArtifactMock.mockReturnValue({
       data: {
         content: '# Graph Context\n\nRisk: medium (0.42)\n\n## Impacted Files\n\n- src/auth.ts',
@@ -104,6 +186,8 @@ describe('graph UI components', () => {
         content: '{"status":"ready","summary":"saved"}',
       },
     })
+    useGraphMinimalContextArtifactMock.mockReturnValue({ data: undefined })
+    useGraphReviewContextArtifactMock.mockReturnValue({ data: undefined })
   })
 
   it('renders graph status badge states with indexed and unsupported counts', () => {
@@ -244,6 +328,12 @@ describe('graph UI components', () => {
 
     expect(html).toContain('Graph Exploration')
     expect(html).toContain('Search indexed symbols and inspect graph-native review signals.')
+    expect(html).toContain('Minimal graph context')
+    expect(html).toContain('Minimal graph context says start with auth.')
+    expect(html).toContain('ocr graph review-context --workflow review --files src/auth.ts')
+    expect(html).toContain('Bounded review context')
+    expect(html).toContain('Graph review context: 1 snippet.')
+    expect(html).toContain('export function login()')
     expect(html).toContain('Graph Search')
     expect(html).toContain('Enter a query to search the graph index.')
     expect(html).toContain('Review analysis')

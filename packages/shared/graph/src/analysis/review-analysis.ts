@@ -4,6 +4,7 @@ import { analyzeChangedSymbols } from "./changes.js";
 import { detectLanguage } from "../language.js";
 import { getChangedFiles } from "../indexer/indexer.js";
 import { getImpactRadiusForNodes, toExplorationStatus } from "../query/query.js";
+import { buildNextToolSuggestions } from "../suggestions.js";
 import { GraphStore } from "../storage/db.js";
 import type {
   GenerateGraphReviewAnalysisOptions,
@@ -160,6 +161,14 @@ export async function generateGraphReviewAnalysis(
         changedFileCount: changedFiles.length,
         changedSymbolPrecision: changedSymbolAnalysis.changedSymbolPrecision,
       },
+      nextToolSuggestions: buildNextToolSuggestions({
+        status: graphStatus.status,
+        workflow: options.workflow,
+        changedFiles,
+        priorities,
+        nodes: changedNodes,
+        files: drilldown.impactedFiles,
+      }),
       performance: {
         phases,
         totalElapsedMs: Date.now() - startedAt,
@@ -278,6 +287,11 @@ function emptyAnalysis(input: {
       changedFileCount: input.changedFiles.length,
       changedSymbolPrecision: input.changedSymbolPrecision,
     },
+    nextToolSuggestions: buildNextToolSuggestions({
+      status: input.status,
+      workflow: input.workflow,
+      changedFiles: input.changedFiles,
+    }),
   };
 }
 

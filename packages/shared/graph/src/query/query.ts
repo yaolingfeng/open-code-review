@@ -1,5 +1,6 @@
 import { existsSync } from "node:fs";
 import { GraphStore } from "../storage/db.js";
+import { buildNextToolSuggestions } from "../suggestions.js";
 import type {
   GraphEdge,
   GraphExplorationStatus,
@@ -21,6 +22,7 @@ export async function queryGraph(options: GraphOptions & { query: GraphQuery }):
       summary: "Graph database does not exist. Run `ocr graph build --full` first.",
       warnings: ["Graph database missing."],
       truncated: false,
+      nextToolSuggestions: buildNextToolSuggestions({ status: "missing" }),
     };
   }
   if (options.query.kind === "impact") {
@@ -50,12 +52,21 @@ export async function searchGraph(options: GraphSearchOptions): Promise<GraphSea
       results: [],
       warnings: ["Graph database missing."],
       truncated: false,
+      nextToolSuggestions: buildNextToolSuggestions({ status: "missing", query: options.query }),
     };
   }
   const store = await GraphStore.open(options.repoRoot, options.ocrDir);
   try {
     const graphStatus = toExplorationStatus(store.status().status);
-    return store.search(options.query, options.limit ?? 20, graphStatus.status, graphStatus.warnings);
+    const result = store.search(options.query, options.limit ?? 20, graphStatus.status, graphStatus.warnings);
+    return {
+      ...result,
+      nextToolSuggestions: buildNextToolSuggestions({
+        status: result.status,
+        query: result.query,
+        searchResults: result.results,
+      }),
+    };
   } finally {
     store.close();
   }
@@ -70,6 +81,7 @@ export async function getImpactRadius(
       summary: "Graph database does not exist. Run `ocr graph build --full` first.",
       warnings: ["Graph database missing."],
       truncated: false,
+      nextToolSuggestions: buildNextToolSuggestions({ status: "missing", changedFiles: options.changedFiles }),
     };
   }
   const store = await GraphStore.open(options.repoRoot, options.ocrDir);
@@ -101,6 +113,7 @@ export function getImpactRadiusForNodes(
       files: [],
       warnings,
       truncated: false,
+      nextToolSuggestions: buildNextToolSuggestions({ status }),
     };
   }
 
@@ -149,6 +162,7 @@ export function getImpactRadiusForNodes(
     files,
     warnings,
     truncated,
+    nextToolSuggestions: buildNextToolSuggestions({ status, nodes: impacted, files }),
   };
 }
 
@@ -205,6 +219,13 @@ function patternQuery(
     edges: limitedEdges.length > 0 ? limitedEdges : undefined,
     warnings,
     truncated: nodes.length > limit || edges.length > limit,
+    nextToolSuggestions: buildNextToolSuggestions({
+      status,
+      pattern,
+      target,
+      nodes: limitedNodes,
+      files: [...new Set(limitedNodes.map((node) => node.filePath))].sort(),
+    }),
   };
 }
 

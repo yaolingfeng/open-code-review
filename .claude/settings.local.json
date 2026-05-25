@@ -1,0 +1,27 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(lsof -iTCP -sTCP:LISTEN -P)",
+      "Bash(kill 69516 *)",
+      "Bash(kill *)",
+      "Bash(lsof *)",
+      "Bash(awk '{print $2}')",
+      "Bash(node *)",
+      "Bash(ocr --version)",
+      "Bash(npx nx *)",
+      "Bash(npx vitest *)",
+      "Bash(grep -v \"^$\")",
+      "Bash(./packages/cli/node_modules/.bin/vitest run *)",
+      "WebFetch(domain:raw.githubusercontent.com)",
+      "Bash(gh api *)",
+      "Bash(curl -fsSL \"https://raw.githubusercontent.com/Pannantong/agent-reach/main/docs/install.md\")",
+      "Bash(curl -fsSL \"https://api.github.com/repos/Pannantong/agent-reach\")",
+      "WebFetch(domain:github.com)",
+      "Skill(agent-reach)"
+    ]
+  },
+  "enabledMcpjsonServers": [
+    "claude-flow",
+    "ruflo"
+  ]
+}

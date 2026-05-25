@@ -1,14 +1,14 @@
 # dashboard Spec Delta
 
-title: "[规格] 图谱 Token 效率 Dashboard"
+title: "[规格] Graph Token 效率 Dashboard"
 status: proposed
-description: "在 Dashboard 中展示 minimal graph context、bounded review context 和 usage comparison，帮助用户理解 graph-enabled review 的 token 与质量收益。"
+description: "在 Dashboard 中展示 minimal graph context、按需 review-context 和 usage comparison，帮助用户理解 graph 如何成为 review 默认入口与导航层。"
 specs:
   - dashboard
 
 ## ADDED Requirements
 
-### Requirement: Minimal Graph Context Panel
+### Requirement: Minimal Graph Context Panel (P1)
 
 Dashboard SHALL surface minimal graph context separately from full graph artifacts.
 
@@ -26,7 +26,7 @@ Dashboard SHALL surface minimal graph context separately from full graph artifac
 - **THEN** Dashboard SHALL show a readable status and remediation
 - **AND** Dashboard SHALL NOT silently trigger graph build or update
 
-### Requirement: Review Context Snippet Drilldown
+### Requirement: Review Context Snippet Drilldown (P1)
 
 Dashboard SHALL allow on-demand review-context snippet retrieval.
 
@@ -36,8 +36,9 @@ Dashboard SHALL allow on-demand review-context snippet retrieval.
 - **WHEN** Dashboard requests review-context
 - **THEN** server SHALL return bounded snippets with file path、line range、reason and truncation metadata
 - **AND** Dashboard SHALL show warnings for omitted or unsupported files
+- **AND** Dashboard SHALL treat snippets as drill-down content rather than default payload
 
-### Requirement: Usage Comparison UI
+### Requirement: Usage Comparison UI (P1)
 
 Dashboard SHALL expose usage comparison results for graph-enabled review experiments.
 
@@ -45,7 +46,7 @@ Dashboard SHALL expose usage comparison results for graph-enabled review experim
 
 - **GIVEN** user selects baseline and candidate sessions
 - **WHEN** Dashboard requests usage comparison
-- **THEN** Dashboard SHOULD show token deltas、percentage changes、tool-call telemetry and caveats
+- **THEN** Dashboard SHOULD show token deltas、percentage changes、tool-call telemetry、verdict and caveats
 - **AND** Dashboard SHOULD avoid claiming token reduction when usage data is incomplete
 
 #### Scenario: Show total-only caveat

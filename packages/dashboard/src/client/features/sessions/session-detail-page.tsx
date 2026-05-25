@@ -229,6 +229,7 @@ export function SessionDetailPage() {
       </div>
 
       <TokenUsageCard
+        workflowId={id}
         summary={tokenUsageQuery.data?.summary}
         isLoading={tokenUsageQuery.isLoading}
         error={tokenUsageQuery.error}

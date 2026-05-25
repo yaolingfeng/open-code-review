@@ -4,6 +4,8 @@ import { GraphStore } from "./storage/db.js";
 import { buildGraph, updateGraph } from "./indexer/indexer.js";
 import { getImpactRadius, queryGraph, searchGraph } from "./query/query.js";
 import { generateGraphContext, renderGraphContextMarkdown } from "./context/context.js";
+import { generateGraphMinimalContext } from "./context/minimal-context.js";
+import { generateGraphReviewContext } from "./context/review-context.js";
 import { generateGraphReviewAnalysis } from "./analysis/review-analysis.js";
 import type { GraphOptions, GraphStatus } from "./types.js";
 import { graphDbPath } from "./utils.js";
@@ -35,6 +37,8 @@ export {
   analyzeChangedSymbols,
   buildGraph,
   generateGraphContext,
+  generateGraphMinimalContext,
+  generateGraphReviewContext,
   generateGraphReviewAnalysis,
   getChangedRanges,
   getImpactRadius,

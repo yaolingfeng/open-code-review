@@ -2,6 +2,7 @@
 
 > **Output file**: `rounds/round-{n}/final.md`
 > **Manifest**: See `references/session-files.md` for authoritative file names
+> **Language**: Write final.md in the language specified by `output.language` in config.yaml (e.g. `zh-CN` for Chinese, `en` for English). If unset, default to English.
 
 This guide describes how to synthesize all findings into a unified final review. Save output to `rounds/round-{n}/final.md`.
 

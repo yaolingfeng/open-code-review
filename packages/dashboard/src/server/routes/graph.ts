@@ -4,6 +4,8 @@ import { fileURLToPath, pathToFileURL } from 'node:url'
 import { Worker } from 'node:worker_threads'
 import { Router } from 'express'
 import {
+  generateGraphMinimalContext,
+  generateGraphReviewContext,
   getGraphStatus,
   getImpactRadius,
   isGraphReviewAnalysis,
@@ -12,7 +14,11 @@ import {
   searchGraph,
   type GraphQuery,
   type GraphReviewAnalysis,
+  type GraphMinimalContext,
+  type GraphReviewContext,
+  type GenerateGraphMinimalContextOptions,
   type GenerateGraphReviewAnalysisOptions,
+  type GenerateGraphReviewContextOptions,
   type GraphWorkflow,
 } from '@open-code-review/graph'
 
@@ -42,6 +48,31 @@ type GraphReviewAnalysisBody = {
   maxModules?: number
   sessionDir?: string
   writeArtifacts?: boolean
+}
+
+type GraphMinimalContextBody = {
+  workflow?: GraphWorkflow
+  base?: string
+  changedFiles?: string[]
+  maxDepth?: number
+  maxFiles?: number
+  maxHints?: number
+  maxPriorities?: number
+  maxWarnings?: number
+  maxSuggestions?: number
+}
+
+type GraphReviewContextBody = {
+  workflow?: GraphWorkflow
+  base?: string
+  changedFiles?: string[]
+  maxDepth?: number
+  maxNodes?: number
+  maxFiles?: number
+  maxSnippets?: number
+  maxLinesPerSnippet?: number
+  maxChars?: number
+  maxSuggestions?: number
 }
 
 const REVIEW_ANALYSIS_CACHE_TTL_MS = 30_000
@@ -147,6 +178,39 @@ export function createGraphRouter(ocrDir: string, options: GraphRouterOptions = 
     }
   })
 
+  router.post('/minimal-context', async (req, res) => {
+    try {
+      const body = req.body as GraphMinimalContextBody
+      if (!isGraphWorkflow(body.workflow)) {
+        res.status(400).json({
+          error: 'Invalid graph minimal context body',
+          expected: '{ workflow: "review" | "map", ... }',
+        })
+        return
+      }
+
+      const request: GenerateGraphMinimalContextOptions = {
+        repoRoot,
+        ocrDir,
+        workflow: body.workflow,
+        base: body.base,
+        changedFiles: body.changedFiles,
+        maxDepth: body.maxDepth,
+        maxFiles: body.maxFiles,
+        maxHints: body.maxHints,
+        maxPriorities: body.maxPriorities,
+        maxWarnings: body.maxWarnings,
+        maxSuggestions: body.maxSuggestions,
+        writeArtifacts: false,
+      }
+      const context: GraphMinimalContext = await generateGraphMinimalContext(request)
+      res.json(context)
+    } catch (err) {
+      console.error('Failed to generate graph minimal context:', err)
+      res.status(500).json({ error: 'Failed to generate graph minimal context' })
+    }
+  })
+
   router.post('/review-analysis', async (req, res) => {
     try {
       const body = req.body as GraphReviewAnalysisBody
@@ -225,6 +289,40 @@ export function createGraphRouter(ocrDir: string, options: GraphRouterOptions = 
       }
       console.error('Failed to generate graph review analysis:', err)
       res.status(500).json({ error: 'Failed to generate graph review analysis' })
+    }
+  })
+
+  router.post('/review-context', async (req, res) => {
+    try {
+      const body = req.body as GraphReviewContextBody
+      if (!isGraphWorkflow(body.workflow)) {
+        res.status(400).json({
+          error: 'Invalid graph review context body',
+          expected: '{ workflow: "review" | "map", ... }',
+        })
+        return
+      }
+
+      const request: GenerateGraphReviewContextOptions = {
+        repoRoot,
+        ocrDir,
+        workflow: body.workflow,
+        base: body.base,
+        changedFiles: body.changedFiles,
+        maxDepth: body.maxDepth,
+        maxNodes: body.maxNodes,
+        maxFiles: body.maxFiles,
+        maxSnippets: body.maxSnippets,
+        maxLinesPerSnippet: body.maxLinesPerSnippet,
+        maxChars: body.maxChars,
+        maxSuggestions: body.maxSuggestions,
+        writeArtifacts: false,
+      }
+      const context: GraphReviewContext = await generateGraphReviewContext(request)
+      res.json(context)
+    } catch (err) {
+      console.error('Failed to generate graph review context:', err)
+      res.status(500).json({ error: 'Failed to generate graph review context' })
     }
   })
 

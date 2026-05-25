@@ -69,8 +69,8 @@ context_discovery:
 
 default_team:
   # Form 1 — shorthand. N instances, no model override.
-  principal: 2    # Holistic architecture review
-  quality: 2      # Code quality and maintainability
+  principal: 1    # Holistic architecture review
+  # quality: 2      # Code quality and maintainability
   # security: 1   # Auto-added for auth/API/data changes
   # testing: 1    # Auto-added for logic-heavy changes
 
@@ -128,6 +128,7 @@ default_team:
 
 output:
   session_dir: ".ocr/sessions"
+  language: zh-CN   # Review output language: zh-CN (中文) or en (English)
 
 discourse:
   enabled: true   # Set false or use --quick to skip reviewer debate phase
@@ -135,3 +136,13 @@ discourse:
 github:
   auto_prompt_post: false
   comment_format: "single"  # "single" or "inline"
+
+# ─────────────────────────────────────────────────────────────────────────────
+# DASHBOARD
+# ─────────────────────────────────────────────────────────────────────────────
+# IDE integration for "Open in Editor" links.
+# Set to your editor or leave as 'auto' for environment-based detection.
+
+dashboard:
+  ide: auto  # auto | vscode | cursor | windsurf | jetbrains | sublime
+  ai_cli: opencode   # auto | claude | opencode | off — which AI CLI the dashboard uses to run commands

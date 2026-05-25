@@ -27,7 +27,9 @@ type ArtifactType =
   | 'context'
   | 'discovered-standards'
   | 'graph-context'
+  | 'graph-minimal-context'
   | 'graph-review-analysis'
+  | 'graph-review-context'
   | 'usage'
 
 type ArtifactEvent = {
@@ -235,7 +237,9 @@ export class FilesystemSync {
       ['context.md', 'context'],
       ['discovered-standards.md', 'discovered-standards'],
       ['graph-context.md', 'graph-context'],
+      ['graph-minimal-context.json', 'graph-minimal-context'],
       ['graph-review-analysis.json', 'graph-review-analysis'],
+      ['graph-review-context.json', 'graph-review-context'],
       ['usage.md', 'usage'],
     ]
     for (const [fileName, artifactType] of sessionArtifacts) {
@@ -1388,8 +1392,16 @@ export class FilesystemSync {
       this.processGenericArtifact(sessionId, 'graph-context', filePath)
       return
     }
+    if (fileName === 'graph-minimal-context.json') {
+      this.processGenericArtifact(sessionId, 'graph-minimal-context', filePath)
+      return
+    }
     if (fileName === 'graph-review-analysis.json') {
       this.processGenericArtifact(sessionId, 'graph-review-analysis', filePath)
+      return
+    }
+    if (fileName === 'graph-review-context.json') {
+      this.processGenericArtifact(sessionId, 'graph-review-context', filePath)
       return
     }
     if (fileName === 'usage.md') {

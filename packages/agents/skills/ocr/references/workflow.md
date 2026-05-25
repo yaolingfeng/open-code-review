@@ -182,6 +182,7 @@ Extract:
 - `context_discovery.openspec` — OpenSpec integration settings
 - `context_discovery.references` — Files to discover
 - `rules:` — Per-severity review rules
+- `output.language` — Output language for all review artifacts (e.g. `zh-CN` for Chinese, `en` for English). Apply this to Tech Lead guidance, all reviewer prompts, and final.md.
 
 **1b. Pull OpenSpec Context (if enabled)**
 
@@ -297,9 +298,14 @@ See `references/context-discovery.md` for detailed algorithm.
    mkdir -p .ocr/sessions/$SESSION_ID/rounds/round-1/reviews
    ```
 
-4. Generate graph context and graph review analysis (best-effort):
+4. Generate minimal graph context and graph review artifacts (best-effort):
    ```bash
    CHANGED_FILES=$(git diff --cached --name-only | paste -sd, -)
+   ocr graph minimal-context \
+     --workflow review \
+     --files "$CHANGED_FILES" \
+     --json >"$SESSION_DIR/graph-minimal-context.json"
+
    ocr graph context \
      --workflow review \
      --files "$CHANGED_FILES" \
@@ -313,8 +319,9 @@ See `references/context-discovery.md` for detailed algorithm.
      --json >/tmp/ocr-graph-review-analysis.json
    ```
 
-   - This writes `graph-context.md`, `graph-context.json`, and `graph-review-analysis.json` at the session root.
-   - `graph-review-analysis.json` is summary-first: use its summary, priorities, review order, key hints, and module summaries by default; do not inject full drilldown payloads when a concise summary is enough.
+   - `graph-minimal-context.json` is the default graph payload for Tech Lead and reviewer prompts.
+   - `graph-context.md`, `graph-context.json`, and `graph-review-analysis.json` are drill-down artifacts. Do not inject full drilldown payloads when minimal context is enough.
+   - Use `nextToolSuggestions` before broad `Read`, `Grep`, or shell exploration when graph output is available.
    - `--fresh` only resets review session state and artifacts. It does **not** rebuild or update `.ocr/data/graph.db`.
    - Graph refresh is always explicit: run `ocr graph update` or `ocr graph build --full` before review if fresh graph data is required.
    - If `.ocr/data/graph.db` is missing, stale, or partially unsupported, continue the review. Graph outputs are advisory investigative context.
@@ -338,10 +345,10 @@ See `references/context-discovery.md` for detailed algorithm.
    - path/to/file2.ts
 
    ## Graph Review Analysis
-   [Summarize graph-review-analysis.json if present: summary, priorities, suggested review order, key hints, module or architecture summaries, warnings]
+   [Prefer graph-minimal-context.json if present: summary, risk, counts, top priorities, key warnings, nextToolSuggestions. Use graph-review-analysis.json only for concise additional hints.]
 
    ## Graph Context
-   [Summarize graph-context.md if present: risk level, changed symbols, changed ranges, impacted files, test gaps, unsupported changed files, warnings]
+   [Do not paste full graph-context.md by default. Summarize only changed-symbol/test-gap/unsupported-file details that materially affect reviewer routing.]
    ```
 
 ### Phase 2 Checkpoint
@@ -388,22 +395,27 @@ See `references/context-discovery.md` for detailed algorithm.
    - What is the likely intent?
    - What are the potential risk areas?
 
-4. Read graph review analysis and graph context if available:
+4. Read minimal graph context first, then graph artifacts only if needed:
    ```bash
+   cat "$SESSION_DIR/graph-minimal-context.json" 2>/dev/null
    cat "$SESSION_DIR/graph-review-analysis.json" 2>/dev/null
-   cat "$SESSION_DIR/graph-context.md" 2>/dev/null
    ```
 
    Use graph signals to refine guidance:
+   - Minimal graph context is the default prompt payload.
+   - `nextToolSuggestions` should guide bounded follow-up before broad reads.
    - Changed symbols and changed ranges can focus reviewer attention inside large files.
    - Impact radius can prioritize files and symbols for deeper inspection.
    - Test gaps can inform testing-focused reviewer prompts.
    - Unsupported changed files must be called out for manual tracing.
    - Do not treat graph-only risk as a finding unless the source or diff confirms it.
 
-5. Create dynamic guidance for reviewers:
+5. Create dynamic guidance for reviewers, incorporating the configured language:
    ```markdown
    ## Tech Lead Guidance
+
+   ### Output Language
+   All review artifacts — including this guidance, all reviewer reports, discourse, and final synthesis — MUST be written in {language} (from `output.language` in config.yaml, defaults to English). This applies to every stage of the review.
 
    ### Requirements Summary (if provided)
    The changes should implement OAuth2 authentication per spec...
@@ -435,15 +447,12 @@ See `references/context-discovery.md` for detailed algorithm.
    - Verify rate limiting is implemented
 
    ### Graph Review Analysis
-   - Summary / priorities / suggested review order / key hints: [from graph-review-analysis.json]
-   - Module or architecture summaries: [from graph-review-analysis.json]
-   - Warning: Use the summary-first view by default; fetch deeper graph detail only on demand.
+   - Minimal context: [summary, risk, counts, top priorities, key warnings from graph-minimal-context.json]
+   - Next tool suggestions: [bounded graph review-context/query/search/impact commands reviewers should try before broad reads]
+   - Warning: Graph signals are investigative context only; every finding still needs source, diff, test, or runtime evidence.
 
    ### Graph Context
-   - Changed symbols / changed ranges: [from graph-context.md]
-   - Impacted files/symbols: [from graph-context.md]
-   - Test gaps: [from graph-context.md]
-   - Unsupported changed files: [from graph-context.md]
+   - Optional drill-down only: [changed symbols/ranges, test gaps, unsupported files when they materially affect routing]
    - Warning: Graph outputs are advisory; verify against source/diff before reporting findings.
    ```
 
@@ -598,14 +607,14 @@ See `references/context-discovery.md` for detailed algorithm.
    - Project context (from `discovered-standards.md`)
    - **Requirements context (from `requirements.md` if provided)**
    - Tech Lead guidance (including requirements assessment)
-   - Graph context from `graph-context.md` if present
+   - Minimal graph context from `graph-minimal-context.json` if present
    - The diff to review
    - **Instruction to explore codebase with full agency**
-   - Permission to call `ocr graph query ...` for follow-up context
+   - Permission to follow `nextToolSuggestions` and call `ocr graph review-context`, `ocr graph query`, `ocr graph search`, or `ocr graph impact` for bounded follow-up context
 
 7. Save each review to `.ocr/sessions/{id}/rounds/round-{current_round}/reviews/{type}-{n}.md`.
 
-Reviewers may use graph context to choose what to inspect next, but every finding must cite concrete source, diff, test, or runtime evidence. Do not file findings based only on graph impact, inferred call edges, or unsupported-file warnings.
+Reviewers should use minimal graph context to choose what to inspect next, but every finding must cite concrete source, diff, test, or runtime evidence. Do not file findings based only on graph impact, inferred call edges, or unsupported-file warnings.
 
 See `references/reviewer-task.md` for the task template.
 
@@ -712,6 +721,7 @@ See `references/discourse.md` for detailed instructions.
 > **File**: `rounds/round-{n}/final.md`
 > **Template**: See `references/final-template.md` for format
 > **Manifest**: See `references/session-files.md` for authoritative file names
+> **Language**: All output files (final.md, discourse.md, round-meta.json summaries, and all reviewer reports) MUST be written in the language specified by `output.language` in config.yaml. If `output.language` is `zh-CN`, write all content in Chinese. If unset, default to English.
 
 ### Steps
 
